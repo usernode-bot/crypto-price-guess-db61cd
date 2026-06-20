@@ -10,7 +10,7 @@
     {
       "key": "APP_PRIVKEY",
       "description": "Private key for APP_PUBKEY — signs payout and result-memo transactions",
-      "required": true,
+      "required": false,
       "private": true,
       "staging_default": "staging_dummy_privkey_not_real"
     },
@@ -25,8 +25,8 @@
       "key": "COINGECKO_API_KEY",
       "description": "Optional CoinGecko API key for higher rate limits (x-cg-demo-api-key header)",
       "required": false,
-      "private": true,
-      "staging_default": ""
+      "private": false,
+      "default": ""
     }
   ],
   "tests": [
