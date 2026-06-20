@@ -1,3 +1,10 @@
 {
-  "secrets": []
+  "secrets": [],
+  "tests": [
+    {
+      "name": "App renders with leaderboard",
+      "path": "/",
+      "expectText": "Crypto Price Guess"
+    }
+  ]
 }
