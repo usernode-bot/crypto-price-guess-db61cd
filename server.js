@@ -272,6 +272,10 @@ app.get('/api/user/me', async (req, res) => {
   }
 });
 
+app.get('/api/admin/daily-results', (_req, res) => {
+  res.status(405).json({ error: 'Method Not Allowed. Use POST.' });
+});
+
 app.post('/api/admin/daily-results', async (req, res) => {
   const adminKey = req.headers['x-admin-key'];
   if (!process.env.ADMIN_KEY || adminKey !== process.env.ADMIN_KEY) {
@@ -567,6 +571,10 @@ async function start() {
   } catch (err) {
     console.error('Schema init error:', err.message);
     return;
+  }
+
+  if (!process.env.ADMIN_KEY) {
+    console.warn('WARNING: ADMIN_KEY is not set — POST /api/admin/daily-results will always return 403');
   }
 
   seedStaging().catch(err => console.error('Seed error (non-fatal):', err.message));
