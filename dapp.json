@@ -17,9 +17,8 @@
     {
       "key": "ADMIN_KEY",
       "description": "Secret for /api/admin/daily-results endpoint (x-admin-key header)",
-      "required": true,
-      "private": true,
-      "staging_default": "staging_admin_key_dev"
+      "required": false,
+      "private": false
     },
     {
       "key": "COINGECKO_API_KEY",
