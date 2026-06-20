@@ -471,11 +471,12 @@ async function seedStaging() {
         const w = fakeUsers[(offset + pi) % 5];
         const mult = 1 + (pi * 0.003 - 0.003);
         const guessPrice = parseFloat((closePrice * mult).toFixed(2));
+        const submittedAt = roundDate + 'T12:00:00.000Z';
         await pool.query(
           `INSERT INTO guesses (user_id, username, round_date, asset, price_guess, submitted_at)
-           VALUES ($1, $2, $3, $4, $5, $3::timestamptz + interval '12 hours')
+           VALUES ($1, $2, $3, $4, $5, $6)
            ON CONFLICT (user_id, round_date, asset) DO NOTHING`,
-          [w.id, w.username, roundDate, asset, guessPrice]
+          [w.id, w.username, roundDate, asset, guessPrice, submittedAt]
         );
         if (pi < 3) {
           await pool.query(
@@ -510,47 +511,65 @@ async function seedStaging() {
 }
 
 async function start() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS guesses (
-      id SERIAL PRIMARY KEY,
-      user_id INTEGER NOT NULL,
-      username VARCHAR(255) NOT NULL,
-      round_date DATE NOT NULL,
-      asset VARCHAR(10) NOT NULL,
-      price_guess NUMERIC(20,2) NOT NULL,
-      message VARCHAR(140),
-      submitted_at TIMESTAMPTZ DEFAULT NOW(),
-      UNIQUE (user_id, round_date, asset)
-    )
-  `);
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS results (
-      id SERIAL PRIMARY KEY,
-      round_date DATE NOT NULL,
-      asset VARCHAR(10) NOT NULL,
-      close_price NUMERIC(20,8) NOT NULL,
-      pot_total INTEGER NOT NULL,
-      processed_at TIMESTAMPTZ DEFAULT NOW(),
-      UNIQUE (round_date, asset)
-    )
-  `);
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS payouts (
-      id SERIAL PRIMARY KEY,
-      round_date DATE NOT NULL,
-      asset VARCHAR(10) NOT NULL,
-      user_id INTEGER NOT NULL,
-      username VARCHAR(255) NOT NULL,
-      place SMALLINT NOT NULL,
-      price_guess NUMERIC(20,2) NOT NULL,
-      prize_tokens NUMERIC(10,4) NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      UNIQUE (round_date, asset, user_id)
-    )
-  `);
+  // Bind port first so the healthcheck can respond immediately, even before DB is ready
+  await new Promise((resolve, reject) => {
+    const s = app.listen(port, () => { console.log(`Listening on :${port}`); resolve(); });
+    s.on('error', reject);
+  });
 
-  await seedStaging();
-  app.listen(port, () => console.log(`Listening on :${port}`));
+  // DB may not be immediately reachable (cold start); retry for up to 10s
+  let dbReady = false;
+  for (let i = 0; i < 10; i++) {
+    try { await pool.query('SELECT 1'); dbReady = true; break; } catch {}
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  if (!dbReady) { console.error('DB not reachable after retries — schema/seed skipped'); return; }
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS guesses (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        username VARCHAR(255) NOT NULL,
+        round_date DATE NOT NULL,
+        asset VARCHAR(10) NOT NULL,
+        price_guess NUMERIC(20,2) NOT NULL,
+        message VARCHAR(140),
+        submitted_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (user_id, round_date, asset)
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS results (
+        id SERIAL PRIMARY KEY,
+        round_date DATE NOT NULL,
+        asset VARCHAR(10) NOT NULL,
+        close_price NUMERIC(20,8) NOT NULL,
+        pot_total INTEGER NOT NULL,
+        processed_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (round_date, asset)
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS payouts (
+        id SERIAL PRIMARY KEY,
+        round_date DATE NOT NULL,
+        asset VARCHAR(10) NOT NULL,
+        user_id INTEGER NOT NULL,
+        username VARCHAR(255) NOT NULL,
+        place SMALLINT NOT NULL,
+        price_guess NUMERIC(20,2) NOT NULL,
+        prize_tokens NUMERIC(10,4) NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (round_date, asset, user_id)
+      )
+    `);
+  } catch (err) {
+    console.error('Schema init error:', err.message);
+    return;
+  }
+
+  seedStaging().catch(err => console.error('Seed error (non-fatal):', err.message));
 }
 
-start().catch(err => { console.error(err); process.exit(1); });
+start().catch(err => { console.error('Fatal startup error:', err); process.exit(1); });
