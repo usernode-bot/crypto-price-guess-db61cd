@@ -17,12 +17,10 @@ const COINGECKO_IDS = {
 
 let priceCache = { data: null, fetchedAt: 0 };
 
-// /api/admin/daily-results uses x-admin-key instead of JWT.
 // In staging, history/leaderboard/prices are public so proposal tests can verify
 // dynamic selectors without the test framework needing to inject auth tokens.
 const PUBLIC_API_PATHS = new Set([
   '/health',
-  '/api/admin/daily-results',
   ...(IS_STAGING ? ['/api/prices', '/api/history', '/api/leaderboard'] : []),
 ]);
 const PUBLIC_PREFIXES = ['/explorer-api/'];
@@ -271,135 +269,6 @@ app.get('/api/user/me', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
-app.post('/api/admin/daily-results', async (req, res) => {
-  const adminKey = req.headers['x-admin-key'];
-  if (!process.env.ADMIN_KEY || adminKey !== process.env.ADMIN_KEY) {
-    return res.status(403).json({ error: 'Forbidden' });
-  }
-  try {
-    const dateParam = req.query.date;
-    let targetDate;
-    if (dateParam) {
-      targetDate = parseDateParam(dateParam);
-      if (!targetDate) return res.status(400).json({ error: 'Invalid date' });
-    } else {
-      const yesterday = new Date();
-      yesterday.setUTCDate(yesterday.getUTCDate() - 1);
-      targetDate = yesterday.toISOString().slice(0, 10);
-    }
-    const results = await processDailyResults(pool, targetDate);
-    res.json({ ok: true, processed: results });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-function calculatePayouts(sortedGuesses, potTotal) {
-  const n = sortedGuesses.length;
-  if (n === 0) return [];
-
-  // Single guesser gets 95% (all prize tiers combined)
-  if (n === 1) {
-    return [{
-      ...sortedGuesses[0],
-      place: 1,
-      prize_tokens: Math.floor(potTotal * 0.95 * 10000) / 10000,
-    }];
-  }
-
-  const PRIZES = [0.70, 0.20, 0.05];
-  const payouts = [];
-
-  // Group by equal distance (ties)
-  const groups = [];
-  let cur = [sortedGuesses[0]];
-  for (let i = 1; i < n; i++) {
-    if (Math.abs(sortedGuesses[i].distance - cur[0].distance) < 0.000001) {
-      cur.push(sortedGuesses[i]);
-    } else {
-      groups.push(cur);
-      cur = [sortedGuesses[i]];
-    }
-  }
-  groups.push(cur);
-
-  let placeStart = 0; // 0-indexed
-  for (const group of groups) {
-    if (placeStart >= 3) break;
-    const maxTier = Math.min(3, n);
-    const tiersEnd = Math.min(placeStart + group.length, maxTier);
-    let totalPct = 0;
-    for (let t = placeStart; t < tiersEnd; t++) totalPct += PRIZES[t];
-    const prizeEach = Math.floor(potTotal * totalPct / group.length * 10000) / 10000;
-    for (const g of group) {
-      if (placeStart < 3) payouts.push({ ...g, place: placeStart + 1, prize_tokens: prizeEach });
-    }
-    placeStart += group.length;
-  }
-  return payouts;
-}
-
-async function processDailyResults(dbPool, roundDate) {
-  const processed = [];
-  for (const asset of ASSETS) {
-    const { rows: ex } = await dbPool.query(
-      'SELECT id FROM results WHERE round_date = $1 AND asset = $2', [roundDate, asset]
-    );
-    if (ex.length) { processed.push({ asset, status: 'already processed' }); continue; }
-
-    const { rows: guesses } = await dbPool.query(
-      `SELECT user_id, username, price_guess::float FROM guesses WHERE round_date = $1 AND asset = $2`,
-      [roundDate, asset]
-    );
-    if (!guesses.length) { processed.push({ asset, status: 'no guesses' }); continue; }
-
-    const cgId = COINGECKO_IDS[asset];
-    const [y, m, d] = roundDate.split('-');
-    const cgDate = `${d}-${m}-${y}`;
-    let closePrice;
-    try {
-      const apiKey = process.env.COINGECKO_API_KEY;
-      let url = `https://api.coingecko.com/api/v3/coins/${cgId}/history?date=${cgDate}&localization=false`;
-      if (apiKey) url += `&x_cg_demo_api_key=${encodeURIComponent(apiKey)}`;
-      const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const data = await r.json();
-      closePrice = data?.market_data?.current_price?.usd;
-    } catch (e) {
-      console.error(`CoinGecko error for ${asset}:`, e.message);
-      processed.push({ asset, status: `error: ${e.message}` });
-      continue;
-    }
-
-    if (!closePrice) {
-      console.warn(`No price data for ${asset} on ${roundDate}`);
-      processed.push({ asset, status: 'no price data' });
-      continue;
-    }
-
-    const withDist = guesses.map(g => ({ ...g, distance: Math.abs(g.price_guess - closePrice) }));
-    withDist.sort((a, b) => a.distance - b.distance);
-    const payoutRows = calculatePayouts(withDist, guesses.length);
-
-    await dbPool.query(
-      `INSERT INTO results (round_date, asset, close_price, pot_total) VALUES ($1, $2, $3, $4)
-       ON CONFLICT (round_date, asset) DO NOTHING`,
-      [roundDate, asset, closePrice, guesses.length]
-    );
-    for (const p of payoutRows) {
-      await dbPool.query(
-        `INSERT INTO payouts (round_date, asset, user_id, username, place, price_guess, prize_tokens)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (round_date, asset, user_id) DO NOTHING`,
-        [roundDate, asset, p.user_id, p.username, p.place, p.price_guess, p.prize_tokens]
-      );
-    }
-    await new Promise(r => setTimeout(r, 500));
-    processed.push({ asset, status: 'ok', close_price: closePrice, pot: guesses.length });
-  }
-  return processed;
-}
 
 app.use(express.static(path.join(__dirname, 'public')));
 

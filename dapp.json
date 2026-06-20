@@ -15,13 +15,6 @@
       "staging_default": "staging_dummy_privkey_not_real"
     },
     {
-      "key": "ADMIN_KEY",
-      "description": "Secret for /api/admin/daily-results endpoint (x-admin-key header)",
-      "required": true,
-      "private": true,
-      "staging_default": "staging_admin_key_dev"
-    },
-    {
       "key": "COINGECKO_API_KEY",
       "description": "Optional CoinGecko API key for higher rate limits (x-cg-demo-api-key header)",
       "required": false,
