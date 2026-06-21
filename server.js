@@ -16,6 +16,15 @@ const COINGECKO_IDS = {
 };
 
 let priceCache = { data: null, fetchedAt: 0 };
+// Per-asset 1-hour intraday history cache: { [asset]: { data, fetchedAt } }
+const priceHistoryCache = {};
+
+// Representative spot price per asset for staging synthesis (mirrors seedStaging's
+// fakePrices last column). Used only when IS_STAGING and the live fetch is empty.
+const STAGING_BASE_PRICE = {
+  BTC: 102700, ETH: 2700, SOL: 170, BNB: 675,
+  TRX: 0.26, HYPE: 34, SUI: 3.7, AVAX: 27,
+};
 
 // /api/admin/daily-results uses x-admin-key instead of JWT.
 // In staging, history/leaderboard/prices are public so proposal tests can verify
@@ -23,7 +32,7 @@ let priceCache = { data: null, fetchedAt: 0 };
 const PUBLIC_API_PATHS = new Set([
   '/health',
   '/api/admin/daily-results',
-  ...(IS_STAGING ? ['/api/prices', '/api/history', '/api/leaderboard'] : []),
+  ...(IS_STAGING ? ['/api/prices', '/api/price-history', '/api/history', '/api/leaderboard'] : []),
 ]);
 const PUBLIC_PREFIXES = ['/explorer-api/'];
 
@@ -77,6 +86,93 @@ app.get('/api/prices', async (_req, res) => {
     res.json({ prices: prices || {} });
   } catch {
     res.json({ prices: priceCache.data || {} });
+  }
+});
+
+// Build a deterministic ~12-point, 60-minute synthetic series around a base price.
+// No Math.random so staging output is stable for proposal tests.
+function synthHistory(asset) {
+  const base = STAGING_BASE_PRICE[asset];
+  if (!base) return { asset, points: [], current: null, change_pct: 0 };
+  const now = Date.now();
+  const points = [];
+  const N = 12;
+  for (let i = 0; i < N; i++) {
+    // Smooth deterministic wiggle: blend two sines keyed on index + asset length.
+    const phase = i + asset.length;
+    const wiggle = Math.sin(phase * 0.7) * 0.012 + Math.sin(phase * 0.27) * 0.006;
+    const p = base * (1 + wiggle);
+    const t = now - (N - 1 - i) * 5 * 60 * 1000;
+    points.push({ t, p: parseFloat(p.toFixed(8)) });
+  }
+  const first = points[0].p;
+  const last = points[points.length - 1].p;
+  return {
+    asset,
+    points,
+    current: last,
+    change_pct: first ? ((last - first) / first) * 100 : 0,
+  };
+}
+
+async function fetchPriceHistory(asset) {
+  const now = Date.now();
+  const cached = priceHistoryCache[asset];
+  if (cached && now - cached.fetchedAt < 60000) return cached.data;
+
+  const cgId = COINGECKO_IDS[asset];
+  const apiKey = process.env.COINGECKO_API_KEY;
+  let url = `https://api.coingecko.com/api/v3/coins/${cgId}/market_chart?vs_currency=usd&days=1`;
+  if (apiKey) url += `&x_cg_demo_api_key=${encodeURIComponent(apiKey)}`;
+
+  let data = null;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (res.ok) {
+      const json = await res.json();
+      const raw = Array.isArray(json?.prices) ? json.prices : [];
+      const cutoff = now - 60 * 60 * 1000;
+      const recent = raw.filter(([t]) => t >= cutoff).map(([t, p]) => ({ t, p }));
+      const points = recent.length >= 2 ? recent : raw.slice(-12).map(([t, p]) => ({ t, p }));
+      if (points.length >= 2) {
+        const first = points[0].p;
+        const last = points[points.length - 1].p;
+        data = {
+          asset,
+          points,
+          current: last,
+          change_pct: first ? ((last - first) / first) * 100 : 0,
+        };
+      }
+    }
+  } catch {
+    // fall through to fallback handling below
+  }
+
+  // Graceful failure / empty: in staging synthesize a stable series; otherwise
+  // return last good cache if present, else an empty series.
+  if (!data) {
+    if (IS_STAGING) {
+      data = synthHistory(asset);
+    } else if (cached?.data) {
+      return cached.data;
+    } else {
+      data = { asset, points: [], current: null, change_pct: 0 };
+    }
+  }
+
+  priceHistoryCache[asset] = { data, fetchedAt: now };
+  return data;
+}
+
+app.get('/api/price-history', async (req, res) => {
+  try {
+    const asset = req.query.asset;
+    if (!ASSETS.includes(asset)) return res.status(400).json({ error: 'Invalid asset' });
+    const data = await fetchPriceHistory(asset);
+    res.json(data);
+  } catch {
+    res.json({ asset: req.query.asset || null, points: [], current: null, change_pct: 0 });
   }
 });
 

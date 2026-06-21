@@ -153,6 +153,12 @@
         </div>
       </div>
 
+      <!-- 1-hour price preview chart (purely informational, never constrains the guess).
+           Always present + visible on the Guess screen; fills in once an asset is selected. -->
+      <div id="guess-chart" class="guess-chart mb-3 bg-zinc-800/50 rounded-xl p-3 border border-zinc-700/50">
+        <p class="text-xs text-zinc-500 text-center py-3">Tap an asset to preview its last hour</p>
+      </div>
+
       <!-- Guess form (shown after asset selected) -->
       <div id="no-asset-msg" class="text-center text-zinc-500 text-sm py-6 bg-zinc-800/50 rounded-xl">
         Tap an asset above to start your prediction
@@ -248,6 +254,7 @@
       pendingAsset: null,
       liveRoundOpen: false,
       currentLbPeriod: 'alltime',
+      chartTimer: null,
     };
 
     // ── API helper ──────────────────────────────────────────────────────
@@ -325,6 +332,8 @@
 
     // ── Navigation ────────────────────────────────────────────────────
     function navigate(screen) {
+      // Stop the guess-screen chart poll whenever we leave it.
+      if (screen !== 'guess') stopChartRefresh();
       document.querySelectorAll('.screen').forEach(s => s.classList.add('hidden'));
       const el = document.getElementById('screen-' + screen);
       if (el) el.classList.remove('hidden');
@@ -473,6 +482,9 @@
       if (state.pendingAsset) {
         selectGuessAsset(state.pendingAsset);
         state.pendingAsset = null;
+      } else if (state.selectedAsset) {
+        // Returning to the guess screen with an asset already chosen — resume its chart.
+        startChartRefresh(state.selectedAsset);
       }
       if (isClosingSoon()) {
         document.getElementById('closing-warning')?.classList.remove('hidden');
@@ -496,6 +508,85 @@
         state.myGuesses = {};
         for (const g of (data.my_guesses || [])) state.myGuesses[g.asset] = g;
       } catch {}
+    }
+
+    // ── 1-hour preview chart ──────────────────────────────────────────
+    function chartPlaceholder(text) {
+      const el = document.getElementById('guess-chart');
+      if (el) el.innerHTML = `<p class="text-xs text-zinc-500 text-center py-3">${text}</p>`;
+    }
+
+    function renderGuessChart(data) {
+      const el = document.getElementById('guess-chart');
+      if (!el) return;
+      const points = (data && Array.isArray(data.points)) ? data.points : [];
+      if (points.length < 2) {
+        chartPlaceholder('1-hour chart unavailable');
+        return;
+      }
+
+      const prices = points.map(p => p.p);
+      let min = Math.min(...prices);
+      let max = Math.max(...prices);
+      if (max === min) { max = min + 1; min = min - 1; } // flat line guard
+      const W = 100, H = 32, pad = 2;
+      const n = points.length;
+      const x = i => (n === 1 ? W / 2 : (i / (n - 1)) * W);
+      const y = v => H - pad - ((v - min) / (max - min)) * (H - pad * 2);
+
+      const coords = points.map((p, i) => [x(i), y(p.p)]);
+      const linePts = coords.map(c => `${c[0].toFixed(2)},${c[1].toFixed(2)}`).join(' ');
+      const areaPts = `0,${H} ` + linePts + ` ${W},${H}`;
+
+      const up = (data.change_pct || 0) >= 0;
+      const stroke = up ? '#4ade80' : '#f87171';      // green-400 / red-400
+      const fill = up ? 'rgba(74,222,128,0.18)' : 'rgba(248,113,113,0.18)';
+      const last = coords[coords.length - 1];
+
+      const pct = (data.change_pct || 0);
+      const pctStr = (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%';
+      const cur = data.current != null ? fmtPrice(data.current) : '—';
+
+      el.innerHTML = `
+        <div class="flex items-center justify-between mb-1.5">
+          <span class="text-xs text-zinc-400">Last 1h</span>
+          <span class="text-xs font-mono ${up ? 'text-green-400' : 'text-red-400'}">1h ${pctStr}</span>
+        </div>
+        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="w-full" style="height:56px" aria-hidden="true">
+          <polygon points="${areaPts}" fill="${fill}" stroke="none"></polygon>
+          <polyline points="${linePts}" fill="none" stroke="${stroke}" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"></polyline>
+          <circle cx="${last[0].toFixed(2)}" cy="${last[1].toFixed(2)}" r="1.6" fill="${stroke}"></circle>
+        </svg>
+        <div class="flex items-center justify-between mt-1.5">
+          <span class="text-xs text-zinc-500">${ASSET_NAMES[data.asset] || data.asset || ''}</span>
+          <span class="text-xs font-mono text-zinc-300">${cur}</span>
+        </div>`;
+    }
+
+    async function loadGuessChart(asset) {
+      chartPlaceholder('Loading chart…');
+      try {
+        const data = await api(`/api/price-history?asset=${encodeURIComponent(asset)}`);
+        // Guard against stale responses if the user switched assets mid-fetch.
+        if (state.selectedAsset !== asset) return;
+        renderGuessChart(data);
+      } catch {
+        if (state.selectedAsset !== asset) return;
+        chartPlaceholder('1-hour chart unavailable');
+      }
+    }
+
+    function startChartRefresh(asset) {
+      if (state.chartTimer) { clearInterval(state.chartTimer); state.chartTimer = null; }
+      loadGuessChart(asset);
+      state.chartTimer = setInterval(() => {
+        // Only refresh while still on this asset; redraws #guess-chart only.
+        if (state.selectedAsset === asset) loadGuessChart(asset);
+      }, 30000);
+    }
+
+    function stopChartRefresh() {
+      if (state.chartTimer) { clearInterval(state.chartTimer); state.chartTimer = null; }
     }
 
     function selectGuessAsset(asset) {
@@ -531,6 +622,9 @@
       updateDeltaPreview();
 
       document.getElementById('my-guess-status').innerHTML = '';
+
+      // (Re)start the 1-hour preview chart for this asset.
+      startChartRefresh(asset);
     }
 
     function validatePriceInput() {
