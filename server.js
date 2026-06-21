@@ -214,26 +214,70 @@ app.get('/api/leaderboard', async (req, res) => {
     }
 
     const params = cutoffDate ? [cutoffDate] : [];
-    const where = cutoffDate ? 'WHERE round_date >= $1' : '';
+    // Period filter applied to both the guesses⋈results accuracy set and the payouts set.
+    const accWhere = cutoffDate ? 'AND g.round_date >= $1' : '';
+    const payWhere = cutoffDate ? 'WHERE round_date >= $1' : '';
 
+    // Top Guessers: per-player prediction accuracy from settled guesses
+    // (a guess whose (round_date, asset) has a results row), LEFT JOINed
+    // onto payout totals so accurate players with no prize still appear.
     const { rows } = await pool.query(`
-      SELECT username,
-             ROUND(SUM(prize_tokens)::numeric, 2) AS total_won,
-             COUNT(*) FILTER (WHERE place = 1) AS wins,
-             COUNT(DISTINCT round_date) AS rounds_with_prizes
-      FROM payouts ${where}
-      GROUP BY username ORDER BY total_won DESC LIMIT 50
+      WITH acc AS (
+        SELECT g.user_id,
+               MAX(g.username) AS username,
+               ROUND((AVG(GREATEST(0, 1 - ABS(g.price_guess - r.close_price) / NULLIF(r.close_price, 0))) * 100)::numeric, 1) AS accuracy_pct,
+               COUNT(*) AS guesses_count
+        FROM guesses g
+        JOIN results r ON r.round_date = g.round_date AND r.asset = g.asset
+        WHERE TRUE ${accWhere}
+        GROUP BY g.user_id
+      ),
+      pay AS (
+        SELECT user_id,
+               ROUND(SUM(prize_tokens)::numeric, 2) AS total_won,
+               COUNT(*) FILTER (WHERE place = 1) AS wins,
+               COUNT(DISTINCT round_date) AS rounds_with_prizes
+        FROM payouts ${payWhere}
+        GROUP BY user_id
+      )
+      SELECT acc.username,
+             acc.accuracy_pct,
+             acc.guesses_count,
+             COALESCE(pay.total_won, 0) AS total_won,
+             COALESCE(pay.wins, 0) AS wins,
+             COALESCE(pay.rounds_with_prizes, 0) AS rounds_with_prizes
+      FROM acc LEFT JOIN pay ON pay.user_id = acc.user_id
+      WHERE acc.guesses_count >= 1
+      ORDER BY acc.accuracy_pct DESC, total_won DESC, acc.guesses_count DESC, acc.username ASC
+      LIMIT 50
     `, params);
 
     let myStats = null;
     if (req.user) {
-      const myWhere = cutoffDate ? 'WHERE username = $1 AND round_date >= $2' : 'WHERE username = $1';
-      const myParams = cutoffDate ? [req.user.username, cutoffDate] : [req.user.username];
+      const myAccWhere = cutoffDate ? 'AND g.round_date >= $2' : '';
+      const myPayWhere = cutoffDate ? 'AND round_date >= $2' : '';
+      const myParams = cutoffDate ? [req.user.id, cutoffDate] : [req.user.id];
       const { rows: myStatRows } = await pool.query(`
-        SELECT ROUND(COALESCE(SUM(prize_tokens), 0)::numeric, 2) AS total_won,
-               COUNT(*) FILTER (WHERE place = 1) AS wins,
-               COUNT(DISTINCT round_date) AS rounds_with_prizes
-        FROM payouts ${myWhere}
+        SELECT (
+                 SELECT ROUND((AVG(GREATEST(0, 1 - ABS(g.price_guess - r.close_price) / NULLIF(r.close_price, 0))) * 100)::numeric, 1)
+                 FROM guesses g
+                 JOIN results r ON r.round_date = g.round_date AND r.asset = g.asset
+                 WHERE g.user_id = $1 ${myAccWhere}
+               ) AS accuracy_pct,
+               (
+                 SELECT COUNT(*)
+                 FROM guesses g
+                 JOIN results r ON r.round_date = g.round_date AND r.asset = g.asset
+                 WHERE g.user_id = $1 ${myAccWhere}
+               ) AS guesses_count,
+               (
+                 SELECT ROUND(COALESCE(SUM(prize_tokens), 0)::numeric, 2)
+                 FROM payouts WHERE user_id = $1 ${myPayWhere}
+               ) AS total_won,
+               (
+                 SELECT COUNT(*) FILTER (WHERE place = 1)
+                 FROM payouts WHERE user_id = $1 ${myPayWhere}
+               ) AS wins
       `, myParams);
       myStats = myStatRows[0];
     }
@@ -471,9 +515,14 @@ async function seedStaging() {
         Math.floor(potTotal * 0.05 * 10000) / 10000,
       ];
 
+      // Per-user characteristic error so the Top Guessers podium has a
+      // visible accuracy spread (alice tightest → eve loosest).
+      const USER_ERR = [0.001, 0.004, 0.010, 0.020, 0.035];
       for (let pi = 0; pi < 5; pi++) {
-        const w = fakeUsers[(offset + pi) % 5];
-        const mult = 1 + (pi * 0.003 - 0.003);
+        const uIdx = (offset + pi) % 5;
+        const w = fakeUsers[uIdx];
+        const dir = (priceIdx + uIdx) % 2 === 0 ? 1 : -1;
+        const mult = 1 + dir * USER_ERR[uIdx];
         const guessPrice = parseFloat((closePrice * mult).toFixed(2));
         const submittedAt = roundDate + 'T12:00:00.000Z';
         await pool.query(
