@@ -35,6 +35,11 @@
       "expectSelector": ".countdown-timer"
     },
     {
+      "name": "Reward boost badge shows when pot milestone reached",
+      "path": "/",
+      "expectSelector": ".reward-boost-badge"
+    },
+    {
       "name": "Guess screen renders 8 asset cards",
       "path": "/#guess",
       "expectSelector": ".asset-card"

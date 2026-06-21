@@ -23,7 +23,10 @@ let priceCache = { data: null, fetchedAt: 0 };
 const PUBLIC_API_PATHS = new Set([
   '/health',
   '/api/admin/daily-results',
-  ...(IS_STAGING ? ['/api/prices', '/api/history', '/api/leaderboard'] : []),
+  // In staging these are public so proposal tests can verify dynamic selectors
+  // (incl. the reward-boost badge, which sums the round pot) without the test
+  // framework needing to inject auth tokens.
+  ...(IS_STAGING ? ['/api/prices', '/api/history', '/api/leaderboard', '/api/round/current'] : []),
 ]);
 const PUBLIC_PREFIXES = ['/explorer-api/'];
 
@@ -92,10 +95,15 @@ app.get('/api/round/current', async (req, res) => {
     for (const r of potRows) {
       pots[r.asset] = { guess_count: parseInt(r.guess_count), pot_tokens: parseInt(r.guess_count) };
     }
-    const { rows: myGuesses } = await pool.query(
-      `SELECT asset, price_guess, message, submitted_at FROM guesses WHERE round_date = $1 AND user_id = $2`,
-      [roundDate, req.user.id]
-    );
+    // req.user is absent on the staging-public path (proposal tests); the pot
+    // totals above don't need it, and my_guesses is simply empty then.
+    let myGuesses = [];
+    if (req.user) {
+      ({ rows: myGuesses } = await pool.query(
+        `SELECT asset, price_guess, message, submitted_at FROM guesses WHERE round_date = $1 AND user_id = $2`,
+        [roundDate, req.user.id]
+      ));
+    }
     res.json({ round_date: roundDate, pots, my_guesses: myGuesses });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -509,6 +517,30 @@ async function seedStaging() {
          VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (user_id, round_date, asset) DO NOTHING`,
         [user.id, user.username, todayDate, asset, guessPrice, messages[ui], submittedAt]
+      );
+    }
+  }
+
+  // Push today's combined pot over the 100-token reward-boost milestone so the
+  // home-screen badge (and its dapp test) is exercisable in staging. The 5
+  // fakeUsers above contribute 5 × 8 = 40 tokens; these 8 extra obviously-fake
+  // demo users add 8 × 8 = 64, for ~104 tokens total — just over the milestone.
+  const boostUsers = [];
+  for (let i = 1; i <= 8; i++) {
+    boostUsers.push({ id: 900100 + i, username: `staging-demo-${String(i).padStart(2, '0')}` });
+  }
+  for (let ai = 0; ai < ASSETS.length; ai++) {
+    const asset = ASSETS[ai];
+    const basePrice = fakePrices[asset][6];
+    for (let ui = 0; ui < boostUsers.length; ui++) {
+      const user = boostUsers[ui];
+      const guessPrice = parseFloat((basePrice * (1 + ui * 0.008 - 0.03)).toFixed(2));
+      const submittedAt = new Date(today.getTime() - (1 + ui * 0.75) * 3600000).toISOString();
+      await pool.query(
+        `INSERT INTO guesses (user_id, username, round_date, asset, price_guess, message, submitted_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (user_id, round_date, asset) DO NOTHING`,
+        [user.id, user.username, todayDate, asset, guessPrice, 'Staging demo — boosting the pot', submittedAt]
       );
     }
   }
