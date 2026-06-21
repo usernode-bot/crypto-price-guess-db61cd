@@ -276,6 +276,17 @@
       }, 3000);
     }
 
+    // ── Haptics ───────────────────────────────────────────────────────
+    // Short tactile pulse on confirmed actions. No-op + error-safe on
+    // devices/browsers without the Vibration API (iOS Safari, desktop).
+    function hapticTap(pattern = 30) {
+      try {
+        if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+          navigator.vibrate(pattern);
+        }
+      } catch {}
+    }
+
     // ── Price formatting ──────────────────────────────────────────────
     function fmtPrice(p) {
       if (p == null || p === '') return '—';
@@ -574,6 +585,7 @@
           method: 'POST',
           body: JSON.stringify({ asset: state.selectedAsset, price_guess: price, message: msg || null }),
         });
+        hapticTap();
         showToast(`${state.selectedAsset} guess of ${fmtPrice(price)} recorded!`, false);
         state.myGuesses[state.selectedAsset] = { asset: state.selectedAsset, price_guess: price, message: msg };
         btn.textContent = 'Update Guess — 1 Token';
