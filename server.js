@@ -18,12 +18,12 @@ const COINGECKO_IDS = {
 let priceCache = { data: null, fetchedAt: 0 };
 
 // /api/admin/daily-results uses x-admin-key instead of JWT.
-// In staging, history/leaderboard/prices are public so proposal tests can verify
+// In staging, history/leaderboard/prices/predictions are public so proposal tests can verify
 // dynamic selectors without the test framework needing to inject auth tokens.
 const PUBLIC_API_PATHS = new Set([
   '/health',
   '/api/admin/daily-results',
-  ...(IS_STAGING ? ['/api/prices', '/api/history', '/api/leaderboard'] : []),
+  ...(IS_STAGING ? ['/api/prices', '/api/history', '/api/leaderboard', '/api/user/predictions'] : []),
 ]);
 const PUBLIC_PREFIXES = ['/explorer-api/'];
 
@@ -267,6 +267,44 @@ app.get('/api/user/me', async (req, res) => {
       total_won: parseFloat(wStats[0]?.total_won || 0),
       wins: parseInt(wStats[0]?.wins || 0),
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/user/predictions', async (req, res) => {
+  try {
+    const isDemo = IS_STAGING && req.query.demo === '1';
+    let userId;
+    if (isDemo) {
+      userId = 900001;
+    } else if (req.user) {
+      userId = req.user.id;
+    } else {
+      return res.json({ predictions: [], total: 0 });
+    }
+
+    const offset = Math.max(0, parseInt(req.query.offset) || 0);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 50));
+
+    const { rows: predictions } = await pool.query(`
+      SELECT
+        g.round_date, g.asset, g.price_guess, g.message, g.submitted_at,
+        r.close_price, r.pot_total,
+        p.place, p.prize_tokens
+      FROM guesses g
+      LEFT JOIN results r ON r.round_date = g.round_date AND r.asset = g.asset
+      LEFT JOIN payouts p ON p.round_date = g.round_date AND p.asset = g.asset AND p.user_id = g.user_id
+      WHERE g.user_id = $1
+      ORDER BY g.round_date DESC, g.asset ASC
+      LIMIT $2 OFFSET $3
+    `, [userId, limit, offset]);
+
+    const { rows: countRows } = await pool.query(
+      `SELECT COUNT(*) AS total FROM guesses WHERE user_id = $1`, [userId]
+    );
+
+    res.json({ predictions, total: parseInt(countRows[0].total) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

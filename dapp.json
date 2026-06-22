@@ -48,6 +48,11 @@
       "name": "Leaderboard screen renders player rows",
       "path": "/#leaderboard",
       "expectSelector": ".leaderboard-row"
+    },
+    {
+      "name": "My Predictions tab renders prediction cards",
+      "path": "/?demo=1#history",
+      "expectSelector": ".prediction-row"
     }
   ]
 }
