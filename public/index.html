@@ -230,7 +230,7 @@
 
     <!-- ===== LEADERBOARD SCREEN ===== -->
     <div id="screen-leaderboard" class="screen hidden">
-      <h2 class="text-base font-semibold mb-3 text-zinc-300">Leaderboard</h2>
+      <h2 class="text-base font-semibold mb-3 text-zinc-300">Top Guessers</h2>
       <div class="flex gap-2 mb-4">
         <button onclick="loadLeaderboard('alltime')" id="lb-tab-alltime"
           class="lb-tab flex-1 py-1.5 rounded-lg text-xs font-semibold bg-violet-600 text-white transition-colors">All Time</button>
@@ -951,26 +951,45 @@
           return;
         }
 
-        const header = `<div class="leaderboard-row grid grid-cols-4 gap-1 text-xs text-zinc-500 px-3 py-2 mb-1">
-          <span>#</span><span>Player</span><span class="text-right">Won</span><span class="text-right">1st</span>
+        const header = `<div class="grid grid-cols-12 gap-1 text-xs text-zinc-500 px-3 py-2 mb-1">
+          <span class="col-span-2">Rank</span>
+          <span class="col-span-5">Player</span>
+          <span class="col-span-3 text-right">Accuracy</span>
+          <span class="col-span-2 text-right">Won</span>
         </div>`;
 
         const rows = leaderboard.map((row, i) => {
           const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '';
-          return `<div class="leaderboard-row grid grid-cols-4 gap-1 text-sm px-3 py-2.5 rounded-lg mb-1 ${i < 3 ? 'bg-violet-900/20 border border-violet-700/20' : 'bg-zinc-800/60'}">
-            <span class="text-zinc-400 text-xs">${medal || (i+1)}</span>
-            <span class="truncate font-medium">${escHtml(row.username)}</span>
-            <span class="text-right font-mono text-green-400 text-xs">${parseFloat(row.total_won).toFixed(2)}</span>
-            <span class="text-right text-zinc-400 text-xs">${row.wins}</span>
+          const podium = [
+            'bg-gradient-to-r from-amber-500/20 to-zinc-800/40 border border-amber-500/40',
+            'bg-gradient-to-r from-zinc-400/15 to-zinc-800/40 border border-zinc-400/40',
+            'bg-gradient-to-r from-orange-700/20 to-zinc-800/40 border border-orange-700/40',
+          ];
+          const rowCls = i < 3 ? podium[i] : 'bg-zinc-800/60';
+          const avatarCls = i === 0 ? 'bg-amber-500/30 text-amber-200'
+            : i === 1 ? 'bg-zinc-400/30 text-zinc-100'
+            : i === 2 ? 'bg-orange-700/30 text-orange-200'
+            : 'bg-violet-600/30 text-violet-200';
+          return `<div class="leaderboard-row grid grid-cols-12 gap-1 items-center text-sm px-3 py-2.5 rounded-lg mb-1 ${rowCls}">
+            <span class="col-span-2 text-zinc-300 ${medal ? 'text-lg' : 'text-xs'}">${medal || (i+1)}</span>
+            <span class="col-span-5 flex items-center gap-2 min-w-0">
+              <span class="w-6 h-6 shrink-0 rounded-full flex items-center justify-center text-xs font-bold ${avatarCls}">${escHtml((row.username || '?')[0]).toUpperCase()}</span>
+              <span class="truncate font-medium">${escHtml(row.username)}</span>
+            </span>
+            <span class="col-span-3 text-right font-mono text-violet-300 text-xs">${row.accuracy_pct != null ? parseFloat(row.accuracy_pct).toFixed(1) + '%' : '—'}</span>
+            <span class="col-span-2 text-right font-mono text-green-400 text-xs">${parseFloat(row.total_won).toFixed(2)}</span>
           </div>`;
         }).join('');
 
         const myRow = my_stats ? `<div class="mt-3 pt-3 border-t border-zinc-700/50">
-          <div class="leaderboard-row grid grid-cols-4 gap-1 text-sm px-3 py-2.5 rounded-lg bg-zinc-700/30 border border-zinc-600/30">
-            <span class="text-zinc-400 text-xs">You</span>
-            <span class="truncate font-medium text-violet-300">me</span>
-            <span class="text-right font-mono text-green-400 text-xs">${parseFloat(my_stats.total_won || 0).toFixed(2)}</span>
-            <span class="text-right text-zinc-400 text-xs">${my_stats.wins || 0}</span>
+          <div class="leaderboard-row grid grid-cols-12 gap-1 items-center text-sm px-3 py-2.5 rounded-lg bg-zinc-700/30 border border-zinc-600/30">
+            <span class="col-span-2 text-zinc-400 text-xs">You</span>
+            <span class="col-span-5 flex items-center gap-2 min-w-0">
+              <span class="w-6 h-6 shrink-0 rounded-full flex items-center justify-center text-xs font-bold bg-violet-600/40 text-violet-100">★</span>
+              <span class="truncate font-medium text-violet-300">me</span>
+            </span>
+            <span class="col-span-3 text-right font-mono text-violet-300 text-xs">${my_stats.accuracy_pct != null ? parseFloat(my_stats.accuracy_pct).toFixed(1) + '%' : '—'}</span>
+            <span class="col-span-2 text-right font-mono text-green-400 text-xs">${parseFloat(my_stats.total_won || 0).toFixed(2)}</span>
           </div>
         </div>` : '';
 

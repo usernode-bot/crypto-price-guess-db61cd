@@ -50,9 +50,10 @@
       "expectSelector": ".history-round"
     },
     {
-      "name": "Leaderboard screen renders player rows",
+      "name": "Top Guessers leaderboard renders player rows",
       "path": "/#leaderboard",
-      "expectSelector": ".leaderboard-row"
+      "expectSelector": ".leaderboard-row",
+      "expectText": "Top Guessers"
     },
     {
       "name": "My Predictions tab renders prediction cards",
