@@ -40,6 +40,11 @@
       "expectSelector": ".asset-card"
     },
     {
+      "name": "Guess screen renders 1-hour preview chart",
+      "path": "/#guess",
+      "expectSelector": ".guess-chart"
+    },
+    {
       "name": "History screen renders round list",
       "path": "/#history",
       "expectSelector": ".history-round"
