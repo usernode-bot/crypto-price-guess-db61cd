@@ -9,10 +9,11 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const JWT_SECRET = process.env.JWT_SECRET;
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
-const ASSETS = ['BTC', 'ETH', 'SOL', 'BNB', 'TRX', 'HYPE', 'SUI', 'AVAX'];
+const ASSETS = ['BTC', 'ETH', 'SOL', 'BNB', 'TRX', 'HYPE', 'SUI', 'AVAX', 'DOGE', 'ADA', 'DOT', 'MATIC'];
 const COINGECKO_IDS = {
   BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', BNB: 'binancecoin',
   TRX: 'tron', HYPE: 'hyperliquid', SUI: 'sui', AVAX: 'avalanche-2',
+  DOGE: 'dogecoin', ADA: 'cardano', DOT: 'polkadot', MATIC: 'matic-network',
 };
 
 let priceCache = { data: null, fetchedAt: 0 };
@@ -435,6 +436,10 @@ async function seedStaging() {
     HYPE: [32, 35, 30, 36, 38, 29, 34],
     SUI: [3.6, 3.8, 3.4, 3.9, 4.0, 3.3, 3.7],
     AVAX: [26, 28, 25, 29, 30, 24, 27],
+    DOGE: [0.17, 0.18, 0.16, 0.18, 0.19, 0.16, 0.17],
+    ADA: [0.35, 0.37, 0.34, 0.38, 0.39, 0.33, 0.36],
+    DOT: [4.50, 4.80, 4.30, 4.90, 5.00, 4.20, 4.60],
+    MATIC: [0.40, 0.43, 0.39, 0.44, 0.45, 0.38, 0.41],
   };
   const fakeUsers = [
     { id: 900001, username: 'staging-alice' },

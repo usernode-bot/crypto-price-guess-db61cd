@@ -35,7 +35,7 @@
       "expectSelector": ".countdown-timer"
     },
     {
-      "name": "Guess screen renders 8 asset cards",
+      "name": "Guess screen renders asset selector cards",
       "path": "/#guess",
       "expectSelector": ".asset-card"
     },

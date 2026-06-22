@@ -109,7 +109,7 @@
     <div id="screen-guess" class="screen hidden">
       <h2 class="text-base font-semibold mb-3 text-zinc-300">Select asset &amp; submit prediction</h2>
 
-      <!-- 8 static asset selector cards — always in DOM for proposal test -->
+      <!-- 12 static asset selector cards — always in DOM for proposal test -->
       <div class="grid grid-cols-4 gap-1.5 mb-5" id="asset-selector">
         <div class="asset-card cursor-pointer rounded-xl p-2 bg-zinc-800 border-2 border-transparent text-center transition-all hover:border-violet-500 active:scale-95 select-none" data-asset="BTC" onclick="selectGuessAsset('BTC')">
           <div class="text-xs font-bold text-white">BTC</div>
@@ -150,6 +150,26 @@
           <div class="text-xs font-bold text-white">AVAX</div>
           <div class="text-xs text-zinc-500 leading-tight">Avalanche</div>
           <div class="text-xs font-mono text-zinc-400 mt-0.5 truncate" id="gp-AVAX">—</div>
+        </div>
+        <div class="asset-card cursor-pointer rounded-xl p-2 bg-zinc-800 border-2 border-transparent text-center transition-all hover:border-violet-500 active:scale-95 select-none" data-asset="DOGE" onclick="selectGuessAsset('DOGE')">
+          <div class="text-xs font-bold text-white">DOGE</div>
+          <div class="text-xs text-zinc-500 leading-tight">Dogecoin</div>
+          <div class="text-xs font-mono text-zinc-400 mt-0.5 truncate" id="gp-DOGE">—</div>
+        </div>
+        <div class="asset-card cursor-pointer rounded-xl p-2 bg-zinc-800 border-2 border-transparent text-center transition-all hover:border-violet-500 active:scale-95 select-none" data-asset="ADA" onclick="selectGuessAsset('ADA')">
+          <div class="text-xs font-bold text-white">ADA</div>
+          <div class="text-xs text-zinc-500 leading-tight">Cardano</div>
+          <div class="text-xs font-mono text-zinc-400 mt-0.5 truncate" id="gp-ADA">—</div>
+        </div>
+        <div class="asset-card cursor-pointer rounded-xl p-2 bg-zinc-800 border-2 border-transparent text-center transition-all hover:border-violet-500 active:scale-95 select-none" data-asset="DOT" onclick="selectGuessAsset('DOT')">
+          <div class="text-xs font-bold text-white">DOT</div>
+          <div class="text-xs text-zinc-500 leading-tight">Polkadot</div>
+          <div class="text-xs font-mono text-zinc-400 mt-0.5 truncate" id="gp-DOT">—</div>
+        </div>
+        <div class="asset-card cursor-pointer rounded-xl p-2 bg-zinc-800 border-2 border-transparent text-center transition-all hover:border-violet-500 active:scale-95 select-none" data-asset="MATIC" onclick="selectGuessAsset('MATIC')">
+          <div class="text-xs font-bold text-white">MATIC</div>
+          <div class="text-xs text-zinc-500 leading-tight">Polygon</div>
+          <div class="text-xs font-mono text-zinc-400 mt-0.5 truncate" id="gp-MATIC">—</div>
         </div>
       </div>
 
@@ -237,8 +257,8 @@
       ? { 'x-usernode-token': token }
       : {};
 
-    const ASSETS = ['BTC','ETH','SOL','BNB','TRX','HYPE','SUI','AVAX'];
-    const ASSET_NAMES = { BTC:'Bitcoin', ETH:'Ethereum', SOL:'Solana', BNB:'BNB', TRX:'TRON', HYPE:'Hyperliquid', SUI:'Sui', AVAX:'Avalanche' };
+    const ASSETS = ['BTC','ETH','SOL','BNB','TRX','HYPE','SUI','AVAX','DOGE','ADA','DOT','MATIC'];
+    const ASSET_NAMES = { BTC:'Bitcoin', ETH:'Ethereum', SOL:'Solana', BNB:'BNB', TRX:'TRON', HYPE:'Hyperliquid', SUI:'Sui', AVAX:'Avalanche', DOGE:'Dogecoin', ADA:'Cardano', DOT:'Polkadot', MATIC:'Polygon' };
 
     const state = {
       prices: {},
