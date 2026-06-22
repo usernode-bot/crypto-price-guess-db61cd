@@ -109,7 +109,7 @@
     <div id="screen-guess" class="screen hidden">
       <h2 class="text-base font-semibold mb-3 text-zinc-300">Select asset &amp; submit prediction</h2>
 
-      <!-- 8 static asset selector cards — always in DOM for proposal test -->
+      <!-- 12 static asset selector cards — always in DOM for proposal test -->
       <div class="grid grid-cols-4 gap-1.5 mb-5" id="asset-selector">
         <div class="asset-card cursor-pointer rounded-xl p-2 bg-zinc-800 border-2 border-transparent text-center transition-all hover:border-violet-500 active:scale-95 select-none" data-asset="BTC" onclick="selectGuessAsset('BTC')">
           <div class="text-xs font-bold text-white">BTC</div>
@@ -151,6 +151,32 @@
           <div class="text-xs text-zinc-500 leading-tight">Avalanche</div>
           <div class="text-xs font-mono text-zinc-400 mt-0.5 truncate" id="gp-AVAX">—</div>
         </div>
+        <div class="asset-card cursor-pointer rounded-xl p-2 bg-zinc-800 border-2 border-transparent text-center transition-all hover:border-violet-500 active:scale-95 select-none" data-asset="DOGE" onclick="selectGuessAsset('DOGE')">
+          <div class="text-xs font-bold text-white">DOGE</div>
+          <div class="text-xs text-zinc-500 leading-tight">Dogecoin</div>
+          <div class="text-xs font-mono text-zinc-400 mt-0.5 truncate" id="gp-DOGE">—</div>
+        </div>
+        <div class="asset-card cursor-pointer rounded-xl p-2 bg-zinc-800 border-2 border-transparent text-center transition-all hover:border-violet-500 active:scale-95 select-none" data-asset="ADA" onclick="selectGuessAsset('ADA')">
+          <div class="text-xs font-bold text-white">ADA</div>
+          <div class="text-xs text-zinc-500 leading-tight">Cardano</div>
+          <div class="text-xs font-mono text-zinc-400 mt-0.5 truncate" id="gp-ADA">—</div>
+        </div>
+        <div class="asset-card cursor-pointer rounded-xl p-2 bg-zinc-800 border-2 border-transparent text-center transition-all hover:border-violet-500 active:scale-95 select-none" data-asset="DOT" onclick="selectGuessAsset('DOT')">
+          <div class="text-xs font-bold text-white">DOT</div>
+          <div class="text-xs text-zinc-500 leading-tight">Polkadot</div>
+          <div class="text-xs font-mono text-zinc-400 mt-0.5 truncate" id="gp-DOT">—</div>
+        </div>
+        <div class="asset-card cursor-pointer rounded-xl p-2 bg-zinc-800 border-2 border-transparent text-center transition-all hover:border-violet-500 active:scale-95 select-none" data-asset="MATIC" onclick="selectGuessAsset('MATIC')">
+          <div class="text-xs font-bold text-white">MATIC</div>
+          <div class="text-xs text-zinc-500 leading-tight">Polygon</div>
+          <div class="text-xs font-mono text-zinc-400 mt-0.5 truncate" id="gp-MATIC">—</div>
+        </div>
+      </div>
+
+      <!-- 1-hour price preview chart (purely informational, never constrains the guess).
+           Always present + visible on the Guess screen; fills in once an asset is selected. -->
+      <div id="guess-chart" class="guess-chart mb-3 bg-zinc-800/50 rounded-xl p-3 border border-zinc-700/50">
+        <p class="text-xs text-zinc-500 text-center py-3">Tap an asset to preview its last hour</p>
       </div>
 
       <!-- Guess form (shown after asset selected) -->
@@ -188,8 +214,18 @@
 
     <!-- ===== HISTORY SCREEN ===== -->
     <div id="screen-history" class="screen hidden">
-      <h2 class="text-base font-semibold mb-4 text-zinc-300">Results &amp; History</h2>
-      <div id="history-list"></div>
+      <div class="flex gap-2 mb-4">
+        <button onclick="switchHistoryTab('results')" id="ht-tab-results"
+          class="hist-tab flex-1 py-1.5 rounded-lg text-xs font-semibold bg-violet-600 text-white transition-colors">Results</button>
+        <button onclick="switchHistoryTab('mine')" id="ht-tab-mine"
+          class="hist-tab flex-1 py-1.5 rounded-lg text-xs font-semibold bg-zinc-700 text-zinc-300 transition-colors">My Predictions</button>
+      </div>
+      <div id="history-results-panel">
+        <div id="history-list"></div>
+      </div>
+      <div id="history-mine-panel" class="hidden">
+        <div id="my-predictions-list"></div>
+      </div>
     </div>
 
     <!-- ===== LEADERBOARD SCREEN ===== -->
@@ -237,8 +273,8 @@
       ? { 'x-usernode-token': token }
       : {};
 
-    const ASSETS = ['BTC','ETH','SOL','BNB','TRX','HYPE','SUI','AVAX'];
-    const ASSET_NAMES = { BTC:'Bitcoin', ETH:'Ethereum', SOL:'Solana', BNB:'BNB', TRX:'TRON', HYPE:'Hyperliquid', SUI:'Sui', AVAX:'Avalanche' };
+    const ASSETS = ['BTC','ETH','SOL','BNB','TRX','HYPE','SUI','AVAX','DOGE','ADA','DOT','MATIC'];
+    const ASSET_NAMES = { BTC:'Bitcoin', ETH:'Ethereum', SOL:'Solana', BNB:'BNB', TRX:'TRON', HYPE:'Hyperliquid', SUI:'Sui', AVAX:'Avalanche', DOGE:'Dogecoin', ADA:'Cardano', DOT:'Polkadot', MATIC:'Polygon' };
 
     const state = {
       prices: {},
@@ -248,6 +284,7 @@
       pendingAsset: null,
       liveRoundOpen: false,
       currentLbPeriod: 'alltime',
+      chartTimer: null,
     };
 
     // ── API helper ──────────────────────────────────────────────────────
@@ -274,6 +311,17 @@
       toastTimer = setTimeout(() => {
         el.className = el.className.replace('opacity-100', 'opacity-0');
       }, 3000);
+    }
+
+    // ── Haptics ───────────────────────────────────────────────────────
+    // Short tactile pulse on confirmed actions. No-op + error-safe on
+    // devices/browsers without the Vibration API (iOS Safari, desktop).
+    function hapticTap(pattern = 30) {
+      try {
+        if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+          navigator.vibrate(pattern);
+        }
+      } catch {}
     }
 
     // ── Price formatting ──────────────────────────────────────────────
@@ -325,6 +373,8 @@
 
     // ── Navigation ────────────────────────────────────────────────────
     function navigate(screen) {
+      // Stop the guess-screen chart poll whenever we leave it.
+      if (screen !== 'guess') stopChartRefresh();
       document.querySelectorAll('.screen').forEach(s => s.classList.add('hidden'));
       const el = document.getElementById('screen-' + screen);
       if (el) el.classList.remove('hidden');
@@ -337,7 +387,17 @@
 
       if (screen === 'home') loadHome();
       else if (screen === 'guess') loadGuess();
-      else if (screen === 'history') loadHistory();
+      else if (screen === 'history') {
+        // Reset My Predictions so it reloads fresh on next open
+        const predList = document.getElementById('my-predictions-list');
+        if (predList) delete predList.dataset.loaded;
+        loadHistory();
+        if (params.get('demo') === '1') {
+          switchHistoryTab('mine');
+        } else {
+          switchHistoryTab('results');
+        }
+      }
       else if (screen === 'leaderboard') loadLeaderboard(state.currentLbPeriod);
     }
 
@@ -473,6 +533,9 @@
       if (state.pendingAsset) {
         selectGuessAsset(state.pendingAsset);
         state.pendingAsset = null;
+      } else if (state.selectedAsset) {
+        // Returning to the guess screen with an asset already chosen — resume its chart.
+        startChartRefresh(state.selectedAsset);
       }
       if (isClosingSoon()) {
         document.getElementById('closing-warning')?.classList.remove('hidden');
@@ -496,6 +559,85 @@
         state.myGuesses = {};
         for (const g of (data.my_guesses || [])) state.myGuesses[g.asset] = g;
       } catch {}
+    }
+
+    // ── 1-hour preview chart ──────────────────────────────────────────
+    function chartPlaceholder(text) {
+      const el = document.getElementById('guess-chart');
+      if (el) el.innerHTML = `<p class="text-xs text-zinc-500 text-center py-3">${text}</p>`;
+    }
+
+    function renderGuessChart(data) {
+      const el = document.getElementById('guess-chart');
+      if (!el) return;
+      const points = (data && Array.isArray(data.points)) ? data.points : [];
+      if (points.length < 2) {
+        chartPlaceholder('1-hour chart unavailable');
+        return;
+      }
+
+      const prices = points.map(p => p.p);
+      let min = Math.min(...prices);
+      let max = Math.max(...prices);
+      if (max === min) { max = min + 1; min = min - 1; } // flat line guard
+      const W = 100, H = 32, pad = 2;
+      const n = points.length;
+      const x = i => (n === 1 ? W / 2 : (i / (n - 1)) * W);
+      const y = v => H - pad - ((v - min) / (max - min)) * (H - pad * 2);
+
+      const coords = points.map((p, i) => [x(i), y(p.p)]);
+      const linePts = coords.map(c => `${c[0].toFixed(2)},${c[1].toFixed(2)}`).join(' ');
+      const areaPts = `0,${H} ` + linePts + ` ${W},${H}`;
+
+      const up = (data.change_pct || 0) >= 0;
+      const stroke = up ? '#4ade80' : '#f87171';      // green-400 / red-400
+      const fill = up ? 'rgba(74,222,128,0.18)' : 'rgba(248,113,113,0.18)';
+      const last = coords[coords.length - 1];
+
+      const pct = (data.change_pct || 0);
+      const pctStr = (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%';
+      const cur = data.current != null ? fmtPrice(data.current) : '—';
+
+      el.innerHTML = `
+        <div class="flex items-center justify-between mb-1.5">
+          <span class="text-xs text-zinc-400">Last 1h</span>
+          <span class="text-xs font-mono ${up ? 'text-green-400' : 'text-red-400'}">1h ${pctStr}</span>
+        </div>
+        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="w-full" style="height:56px" aria-hidden="true">
+          <polygon points="${areaPts}" fill="${fill}" stroke="none"></polygon>
+          <polyline points="${linePts}" fill="none" stroke="${stroke}" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"></polyline>
+          <circle cx="${last[0].toFixed(2)}" cy="${last[1].toFixed(2)}" r="1.6" fill="${stroke}"></circle>
+        </svg>
+        <div class="flex items-center justify-between mt-1.5">
+          <span class="text-xs text-zinc-500">${ASSET_NAMES[data.asset] || data.asset || ''}</span>
+          <span class="text-xs font-mono text-zinc-300">${cur}</span>
+        </div>`;
+    }
+
+    async function loadGuessChart(asset) {
+      chartPlaceholder('Loading chart…');
+      try {
+        const data = await api(`/api/price-history?asset=${encodeURIComponent(asset)}`);
+        // Guard against stale responses if the user switched assets mid-fetch.
+        if (state.selectedAsset !== asset) return;
+        renderGuessChart(data);
+      } catch {
+        if (state.selectedAsset !== asset) return;
+        chartPlaceholder('1-hour chart unavailable');
+      }
+    }
+
+    function startChartRefresh(asset) {
+      if (state.chartTimer) { clearInterval(state.chartTimer); state.chartTimer = null; }
+      loadGuessChart(asset);
+      state.chartTimer = setInterval(() => {
+        // Only refresh while still on this asset; redraws #guess-chart only.
+        if (state.selectedAsset === asset) loadGuessChart(asset);
+      }, 30000);
+    }
+
+    function stopChartRefresh() {
+      if (state.chartTimer) { clearInterval(state.chartTimer); state.chartTimer = null; }
     }
 
     function selectGuessAsset(asset) {
@@ -531,6 +673,9 @@
       updateDeltaPreview();
 
       document.getElementById('my-guess-status').innerHTML = '';
+
+      // (Re)start the 1-hour preview chart for this asset.
+      startChartRefresh(asset);
     }
 
     function validatePriceInput() {
@@ -574,6 +719,7 @@
           method: 'POST',
           body: JSON.stringify({ asset: state.selectedAsset, price_guess: price, message: msg || null }),
         });
+        hapticTap();
         showToast(`${state.selectedAsset} guess of ${fmtPrice(price)} recorded!`, false);
         state.myGuesses[state.selectedAsset] = { asset: state.selectedAsset, price_guess: price, message: msg };
         btn.textContent = 'Update Guess — 1 Token';
@@ -588,6 +734,126 @@
           btn.textContent = state.myGuesses[state.selectedAsset] ? 'Update Guess — 1 Token' : 'Submit Guess — 1 Token';
         }
       }
+    }
+
+    // ── HISTORY TABS ──────────────────────────────────────────────────
+    function switchHistoryTab(tab) {
+      ['results', 'mine'].forEach(t => {
+        const btn = document.getElementById('ht-tab-' + t);
+        if (!btn) return;
+        btn.className = 'hist-tab flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors '
+          + (t === tab ? 'bg-violet-600 text-white' : 'bg-zinc-700 text-zinc-300');
+      });
+      document.getElementById('history-results-panel')?.classList.toggle('hidden', tab !== 'results');
+      document.getElementById('history-mine-panel')?.classList.toggle('hidden', tab !== 'mine');
+
+      if (tab === 'mine') {
+        const predList = document.getElementById('my-predictions-list');
+        if (predList && !predList.dataset.loaded) {
+          predList.dataset.loaded = '1';
+          loadMyPredictions(0);
+        }
+      }
+    }
+
+    const myPredState = { offset: 0, total: 0 };
+
+    async function loadMyPredictions(offset) {
+      const listEl = document.getElementById('my-predictions-list');
+      if (!listEl) return;
+
+      const demoParam = params.get('demo') === '1' ? '&demo=1' : '';
+
+      if (offset === 0) {
+        listEl.innerHTML = '<p class="text-zinc-500 text-sm text-center py-8">Loading...</p>';
+        myPredState.offset = 0;
+        myPredState.total = 0;
+      } else {
+        const oldBtn = document.getElementById('load-more-predictions');
+        if (oldBtn) oldBtn.remove();
+      }
+
+      try {
+        const data = await api(`/api/user/predictions?offset=${offset}&limit=50${demoParam}`);
+        const predictions = data.predictions || [];
+        myPredState.total = data.total || 0;
+        myPredState.offset = offset + predictions.length;
+
+        if (offset === 0) {
+          if (!predictions.length) {
+            listEl.innerHTML = `<div class="text-center py-8">
+              <p class="text-zinc-500 text-sm mb-2">No predictions yet.</p>
+              <a href="#guess" class="text-violet-400 text-sm hover:underline">Head to the Guess tab to submit your first one! →</a>
+            </div>`;
+            return;
+          }
+          listEl.innerHTML = '';
+        }
+
+        listEl.insertAdjacentHTML('beforeend', predictions.map(renderPredictionCard).join(''));
+
+        if (myPredState.offset < myPredState.total) {
+          const remaining = myPredState.total - myPredState.offset;
+          listEl.insertAdjacentHTML('beforeend', `
+            <button id="load-more-predictions" onclick="loadMyPredictions(${myPredState.offset})"
+              class="w-full mt-2 py-2 text-sm text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 rounded-xl border border-zinc-700 transition-colors">
+              Load more (${remaining} remaining)
+            </button>
+          `);
+        }
+      } catch {
+        if (offset === 0) {
+          listEl.innerHTML = '<p class="text-red-400 text-sm text-center py-8">Failed to load predictions.</p>';
+        }
+      }
+    }
+
+    function renderPredictionCard(p) {
+      const isSettled = p.close_price != null;
+      const hasPlacement = p.place != null;
+      const assetName = ASSET_NAMES[p.asset] || p.asset;
+
+      let badge;
+      if (!isSettled) {
+        badge = '<span class="text-xs px-2 py-0.5 rounded-full bg-zinc-700/80 text-zinc-400">Pending</span>';
+      } else if (hasPlacement) {
+        const placeLabel = ['', '1st', '2nd', '3rd'][p.place] || (p.place + 'th');
+        const tokStr = parseFloat(p.prize_tokens).toFixed(4);
+        const color = p.place === 1
+          ? 'bg-yellow-900/40 text-yellow-300 border border-yellow-700/40'
+          : p.place === 2
+            ? 'bg-zinc-600/40 text-zinc-300 border border-zinc-500/40'
+            : 'bg-amber-900/30 text-amber-400 border border-amber-700/30';
+        badge = `<span class="text-xs px-2 py-0.5 rounded-full ${color}">${placeLabel} +${tokStr} tok</span>`;
+      } else {
+        badge = '<span class="text-xs px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-500 border border-zinc-700/50">No placement</span>';
+      }
+
+      const accuracyLine = isSettled
+        ? `<div class="text-right mt-1.5"><span class="text-xs text-zinc-500">Off by ${fmtPrice(Math.abs(parseFloat(p.price_guess) - parseFloat(p.close_price)))}</span></div>`
+        : '';
+
+      return `<div class="prediction-row bg-zinc-800/80 rounded-xl p-3 mb-2 border border-zinc-700/50">
+        <div class="flex justify-between items-center mb-2">
+          <div>
+            <span class="text-xs text-zinc-500">${fmtDate(p.round_date)}</span>
+            <span class="ml-2 text-sm font-bold text-violet-300">${escHtml(p.asset)}</span>
+            <span class="text-xs text-zinc-500 ml-1">${escHtml(assetName)}</span>
+          </div>
+          ${badge}
+        </div>
+        <div class="flex justify-between items-end">
+          <div>
+            <div class="text-xs text-zinc-500 mb-0.5">Your guess</div>
+            <div class="font-mono text-sm text-white">${fmtPrice(p.price_guess)}</div>
+          </div>
+          <div class="text-right">
+            <div class="text-xs text-zinc-500 mb-0.5">Actual close</div>
+            <div class="font-mono text-sm ${isSettled ? 'text-white' : 'text-zinc-500'}">${isSettled ? fmtPrice(p.close_price) : 'Pending'}</div>
+          </div>
+        </div>
+        ${accuracyLine}
+      </div>`;
     }
 
     // ── HISTORY ───────────────────────────────────────────────────────

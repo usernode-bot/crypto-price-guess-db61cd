@@ -9,21 +9,31 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const JWT_SECRET = process.env.JWT_SECRET;
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
-const ASSETS = ['BTC', 'ETH', 'SOL', 'BNB', 'TRX', 'HYPE', 'SUI', 'AVAX'];
+const ASSETS = ['BTC', 'ETH', 'SOL', 'BNB', 'TRX', 'HYPE', 'SUI', 'AVAX', 'DOGE', 'ADA', 'DOT', 'MATIC'];
 const COINGECKO_IDS = {
   BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', BNB: 'binancecoin',
   TRX: 'tron', HYPE: 'hyperliquid', SUI: 'sui', AVAX: 'avalanche-2',
+  DOGE: 'dogecoin', ADA: 'cardano', DOT: 'polkadot', MATIC: 'matic-network',
 };
 
 let priceCache = { data: null, fetchedAt: 0 };
+// Per-asset 1-hour intraday history cache: { [asset]: { data, fetchedAt } }
+const priceHistoryCache = {};
+
+// Representative spot price per asset for staging synthesis (mirrors seedStaging's
+// fakePrices last column). Used only when IS_STAGING and the live fetch is empty.
+const STAGING_BASE_PRICE = {
+  BTC: 102700, ETH: 2700, SOL: 170, BNB: 675,
+  TRX: 0.26, HYPE: 34, SUI: 3.7, AVAX: 27,
+};
 
 // /api/admin/daily-results uses x-admin-key instead of JWT.
-// In staging, history/leaderboard/prices are public so proposal tests can verify
+// In staging, history/leaderboard/prices/predictions are public so proposal tests can verify
 // dynamic selectors without the test framework needing to inject auth tokens.
 const PUBLIC_API_PATHS = new Set([
   '/health',
   '/api/admin/daily-results',
-  ...(IS_STAGING ? ['/api/prices', '/api/history', '/api/leaderboard'] : []),
+  ...(IS_STAGING ? ['/api/prices', '/api/price-history', '/api/history', '/api/leaderboard', '/api/user/predictions'] : []),
 ]);
 const PUBLIC_PREFIXES = ['/explorer-api/'];
 
@@ -77,6 +87,93 @@ app.get('/api/prices', async (_req, res) => {
     res.json({ prices: prices || {} });
   } catch {
     res.json({ prices: priceCache.data || {} });
+  }
+});
+
+// Build a deterministic ~12-point, 60-minute synthetic series around a base price.
+// No Math.random so staging output is stable for proposal tests.
+function synthHistory(asset) {
+  const base = STAGING_BASE_PRICE[asset];
+  if (!base) return { asset, points: [], current: null, change_pct: 0 };
+  const now = Date.now();
+  const points = [];
+  const N = 12;
+  for (let i = 0; i < N; i++) {
+    // Smooth deterministic wiggle: blend two sines keyed on index + asset length.
+    const phase = i + asset.length;
+    const wiggle = Math.sin(phase * 0.7) * 0.012 + Math.sin(phase * 0.27) * 0.006;
+    const p = base * (1 + wiggle);
+    const t = now - (N - 1 - i) * 5 * 60 * 1000;
+    points.push({ t, p: parseFloat(p.toFixed(8)) });
+  }
+  const first = points[0].p;
+  const last = points[points.length - 1].p;
+  return {
+    asset,
+    points,
+    current: last,
+    change_pct: first ? ((last - first) / first) * 100 : 0,
+  };
+}
+
+async function fetchPriceHistory(asset) {
+  const now = Date.now();
+  const cached = priceHistoryCache[asset];
+  if (cached && now - cached.fetchedAt < 60000) return cached.data;
+
+  const cgId = COINGECKO_IDS[asset];
+  const apiKey = process.env.COINGECKO_API_KEY;
+  let url = `https://api.coingecko.com/api/v3/coins/${cgId}/market_chart?vs_currency=usd&days=1`;
+  if (apiKey) url += `&x_cg_demo_api_key=${encodeURIComponent(apiKey)}`;
+
+  let data = null;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (res.ok) {
+      const json = await res.json();
+      const raw = Array.isArray(json?.prices) ? json.prices : [];
+      const cutoff = now - 60 * 60 * 1000;
+      const recent = raw.filter(([t]) => t >= cutoff).map(([t, p]) => ({ t, p }));
+      const points = recent.length >= 2 ? recent : raw.slice(-12).map(([t, p]) => ({ t, p }));
+      if (points.length >= 2) {
+        const first = points[0].p;
+        const last = points[points.length - 1].p;
+        data = {
+          asset,
+          points,
+          current: last,
+          change_pct: first ? ((last - first) / first) * 100 : 0,
+        };
+      }
+    }
+  } catch {
+    // fall through to fallback handling below
+  }
+
+  // Graceful failure / empty: in staging synthesize a stable series; otherwise
+  // return last good cache if present, else an empty series.
+  if (!data) {
+    if (IS_STAGING) {
+      data = synthHistory(asset);
+    } else if (cached?.data) {
+      return cached.data;
+    } else {
+      data = { asset, points: [], current: null, change_pct: 0 };
+    }
+  }
+
+  priceHistoryCache[asset] = { data, fetchedAt: now };
+  return data;
+}
+
+app.get('/api/price-history', async (req, res) => {
+  try {
+    const asset = req.query.asset;
+    if (!ASSETS.includes(asset)) return res.status(400).json({ error: 'Invalid asset' });
+    const data = await fetchPriceHistory(asset);
+    res.json(data);
+  } catch {
+    res.json({ asset: req.query.asset || null, points: [], current: null, change_pct: 0 });
   }
 });
 
@@ -316,6 +413,44 @@ app.get('/api/user/me', async (req, res) => {
   }
 });
 
+app.get('/api/user/predictions', async (req, res) => {
+  try {
+    const isDemo = IS_STAGING && req.query.demo === '1';
+    let userId;
+    if (isDemo) {
+      userId = 900001;
+    } else if (req.user) {
+      userId = req.user.id;
+    } else {
+      return res.json({ predictions: [], total: 0 });
+    }
+
+    const offset = Math.max(0, parseInt(req.query.offset) || 0);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 50));
+
+    const { rows: predictions } = await pool.query(`
+      SELECT
+        g.round_date, g.asset, g.price_guess, g.message, g.submitted_at,
+        r.close_price, r.pot_total,
+        p.place, p.prize_tokens
+      FROM guesses g
+      LEFT JOIN results r ON r.round_date = g.round_date AND r.asset = g.asset
+      LEFT JOIN payouts p ON p.round_date = g.round_date AND p.asset = g.asset AND p.user_id = g.user_id
+      WHERE g.user_id = $1
+      ORDER BY g.round_date DESC, g.asset ASC
+      LIMIT $2 OFFSET $3
+    `, [userId, limit, offset]);
+
+    const { rows: countRows } = await pool.query(
+      `SELECT COUNT(*) AS total FROM guesses WHERE user_id = $1`, [userId]
+    );
+
+    res.json({ predictions, total: parseInt(countRows[0].total) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/admin/daily-results', (_req, res) => {
   res.status(405).json({ error: 'Method Not Allowed. Use POST.' });
 });
@@ -479,6 +614,10 @@ async function seedStaging() {
     HYPE: [32, 35, 30, 36, 38, 29, 34],
     SUI: [3.6, 3.8, 3.4, 3.9, 4.0, 3.3, 3.7],
     AVAX: [26, 28, 25, 29, 30, 24, 27],
+    DOGE: [0.17, 0.18, 0.16, 0.18, 0.19, 0.16, 0.17],
+    ADA: [0.35, 0.37, 0.34, 0.38, 0.39, 0.33, 0.36],
+    DOT: [4.50, 4.80, 4.30, 4.90, 5.00, 4.20, 4.60],
+    MATIC: [0.40, 0.43, 0.39, 0.44, 0.45, 0.38, 0.41],
   };
   const fakeUsers = [
     { id: 900001, username: 'staging-alice' },
