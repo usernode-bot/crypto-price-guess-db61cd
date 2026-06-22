@@ -188,8 +188,18 @@
 
     <!-- ===== HISTORY SCREEN ===== -->
     <div id="screen-history" class="screen hidden">
-      <h2 class="text-base font-semibold mb-4 text-zinc-300">Results &amp; History</h2>
-      <div id="history-list"></div>
+      <div class="flex gap-2 mb-4">
+        <button onclick="switchHistoryTab('results')" id="ht-tab-results"
+          class="hist-tab flex-1 py-1.5 rounded-lg text-xs font-semibold bg-violet-600 text-white transition-colors">Results</button>
+        <button onclick="switchHistoryTab('mine')" id="ht-tab-mine"
+          class="hist-tab flex-1 py-1.5 rounded-lg text-xs font-semibold bg-zinc-700 text-zinc-300 transition-colors">My Predictions</button>
+      </div>
+      <div id="history-results-panel">
+        <div id="history-list"></div>
+      </div>
+      <div id="history-mine-panel" class="hidden">
+        <div id="my-predictions-list"></div>
+      </div>
     </div>
 
     <!-- ===== LEADERBOARD SCREEN ===== -->
@@ -337,7 +347,17 @@
 
       if (screen === 'home') loadHome();
       else if (screen === 'guess') loadGuess();
-      else if (screen === 'history') loadHistory();
+      else if (screen === 'history') {
+        // Reset My Predictions so it reloads fresh on next open
+        const predList = document.getElementById('my-predictions-list');
+        if (predList) delete predList.dataset.loaded;
+        loadHistory();
+        if (params.get('demo') === '1') {
+          switchHistoryTab('mine');
+        } else {
+          switchHistoryTab('results');
+        }
+      }
       else if (screen === 'leaderboard') loadLeaderboard(state.currentLbPeriod);
     }
 
@@ -588,6 +608,126 @@
           btn.textContent = state.myGuesses[state.selectedAsset] ? 'Update Guess — 1 Token' : 'Submit Guess — 1 Token';
         }
       }
+    }
+
+    // ── HISTORY TABS ──────────────────────────────────────────────────
+    function switchHistoryTab(tab) {
+      ['results', 'mine'].forEach(t => {
+        const btn = document.getElementById('ht-tab-' + t);
+        if (!btn) return;
+        btn.className = 'hist-tab flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors '
+          + (t === tab ? 'bg-violet-600 text-white' : 'bg-zinc-700 text-zinc-300');
+      });
+      document.getElementById('history-results-panel')?.classList.toggle('hidden', tab !== 'results');
+      document.getElementById('history-mine-panel')?.classList.toggle('hidden', tab !== 'mine');
+
+      if (tab === 'mine') {
+        const predList = document.getElementById('my-predictions-list');
+        if (predList && !predList.dataset.loaded) {
+          predList.dataset.loaded = '1';
+          loadMyPredictions(0);
+        }
+      }
+    }
+
+    const myPredState = { offset: 0, total: 0 };
+
+    async function loadMyPredictions(offset) {
+      const listEl = document.getElementById('my-predictions-list');
+      if (!listEl) return;
+
+      const demoParam = params.get('demo') === '1' ? '&demo=1' : '';
+
+      if (offset === 0) {
+        listEl.innerHTML = '<p class="text-zinc-500 text-sm text-center py-8">Loading...</p>';
+        myPredState.offset = 0;
+        myPredState.total = 0;
+      } else {
+        const oldBtn = document.getElementById('load-more-predictions');
+        if (oldBtn) oldBtn.remove();
+      }
+
+      try {
+        const data = await api(`/api/user/predictions?offset=${offset}&limit=50${demoParam}`);
+        const predictions = data.predictions || [];
+        myPredState.total = data.total || 0;
+        myPredState.offset = offset + predictions.length;
+
+        if (offset === 0) {
+          if (!predictions.length) {
+            listEl.innerHTML = `<div class="text-center py-8">
+              <p class="text-zinc-500 text-sm mb-2">No predictions yet.</p>
+              <a href="#guess" class="text-violet-400 text-sm hover:underline">Head to the Guess tab to submit your first one! →</a>
+            </div>`;
+            return;
+          }
+          listEl.innerHTML = '';
+        }
+
+        listEl.insertAdjacentHTML('beforeend', predictions.map(renderPredictionCard).join(''));
+
+        if (myPredState.offset < myPredState.total) {
+          const remaining = myPredState.total - myPredState.offset;
+          listEl.insertAdjacentHTML('beforeend', `
+            <button id="load-more-predictions" onclick="loadMyPredictions(${myPredState.offset})"
+              class="w-full mt-2 py-2 text-sm text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 rounded-xl border border-zinc-700 transition-colors">
+              Load more (${remaining} remaining)
+            </button>
+          `);
+        }
+      } catch {
+        if (offset === 0) {
+          listEl.innerHTML = '<p class="text-red-400 text-sm text-center py-8">Failed to load predictions.</p>';
+        }
+      }
+    }
+
+    function renderPredictionCard(p) {
+      const isSettled = p.close_price != null;
+      const hasPlacement = p.place != null;
+      const assetName = ASSET_NAMES[p.asset] || p.asset;
+
+      let badge;
+      if (!isSettled) {
+        badge = '<span class="text-xs px-2 py-0.5 rounded-full bg-zinc-700/80 text-zinc-400">Pending</span>';
+      } else if (hasPlacement) {
+        const placeLabel = ['', '1st', '2nd', '3rd'][p.place] || (p.place + 'th');
+        const tokStr = parseFloat(p.prize_tokens).toFixed(4);
+        const color = p.place === 1
+          ? 'bg-yellow-900/40 text-yellow-300 border border-yellow-700/40'
+          : p.place === 2
+            ? 'bg-zinc-600/40 text-zinc-300 border border-zinc-500/40'
+            : 'bg-amber-900/30 text-amber-400 border border-amber-700/30';
+        badge = `<span class="text-xs px-2 py-0.5 rounded-full ${color}">${placeLabel} +${tokStr} tok</span>`;
+      } else {
+        badge = '<span class="text-xs px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-500 border border-zinc-700/50">No placement</span>';
+      }
+
+      const accuracyLine = isSettled
+        ? `<div class="text-right mt-1.5"><span class="text-xs text-zinc-500">Off by ${fmtPrice(Math.abs(parseFloat(p.price_guess) - parseFloat(p.close_price)))}</span></div>`
+        : '';
+
+      return `<div class="prediction-row bg-zinc-800/80 rounded-xl p-3 mb-2 border border-zinc-700/50">
+        <div class="flex justify-between items-center mb-2">
+          <div>
+            <span class="text-xs text-zinc-500">${fmtDate(p.round_date)}</span>
+            <span class="ml-2 text-sm font-bold text-violet-300">${escHtml(p.asset)}</span>
+            <span class="text-xs text-zinc-500 ml-1">${escHtml(assetName)}</span>
+          </div>
+          ${badge}
+        </div>
+        <div class="flex justify-between items-end">
+          <div>
+            <div class="text-xs text-zinc-500 mb-0.5">Your guess</div>
+            <div class="font-mono text-sm text-white">${fmtPrice(p.price_guess)}</div>
+          </div>
+          <div class="text-right">
+            <div class="text-xs text-zinc-500 mb-0.5">Actual close</div>
+            <div class="font-mono text-sm ${isSettled ? 'text-white' : 'text-zinc-500'}">${isSettled ? fmtPrice(p.close_price) : 'Pending'}</div>
+          </div>
+        </div>
+        ${accuracyLine}
+      </div>`;
     }
 
     // ── HISTORY ───────────────────────────────────────────────────────
