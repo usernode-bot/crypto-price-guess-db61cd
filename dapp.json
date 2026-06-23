@@ -64,6 +64,11 @@
       "name": "My Predictions tab renders prediction cards",
       "path": "/?demo=1#history",
       "expectSelector": ".prediction-row"
+    },
+    {
+      "name": "Profile page renders identity card and stats",
+      "path": "/?demo=1#profile",
+      "expectSelector": ".profile-card"
     }
   ]
 }
