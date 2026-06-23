@@ -76,6 +76,11 @@
       "name": "On-chain receipt link renders on a prediction card",
       "path": "/?demo=1#history",
       "expectSelector": ".onchain-link"
+    },
+    {
+      "name": "Profile page renders identity card and stats",
+      "path": "/?demo=1#profile",
+      "expectSelector": ".profile-card"
     }
   ]
 }
