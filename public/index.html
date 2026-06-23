@@ -88,6 +88,9 @@
       }
     }
   }</script>
+  <!-- Hosted Usernode bridge: provides window.usernode.sendTransaction /
+       getNodeAddress for recording each guess on-chain. Never vendor this. -->
+  <script src="https://social-vibecoding.usernodelabs.org/usernode-bridge/v1/bridge.js"></script>
 </head>
 <body class="bg-bg text-ink min-h-screen">
 
@@ -378,6 +381,88 @@
       return res.json();
     }
 
+    // ── On-chain receipts ─────────────────────────────────────────────
+    // Config (app receiving address + optional explorer URL) is fetched once
+    // and cached. Recording a guess on-chain is strictly best-effort: the
+    // guess is already persisted server-side before we ever touch the bridge.
+    let appConfig = null;
+    async function loadConfig() {
+      if (appConfig) return appConfig;
+      try { appConfig = await api('/api/config'); } catch { appConfig = {}; }
+      return appConfig;
+    }
+
+    function bridgeAvailable() {
+      return typeof window !== 'undefined'
+        && window.usernode
+        && typeof window.usernode.sendTransaction === 'function';
+    }
+
+    // Pull a tx reference out of whatever sendTransaction resolved to, mirroring
+    // the bridge's own key precedence.
+    function extractTxId(result) {
+      if (!result) return null;
+      const keys = ['tx_id', 'txid', 'txId', 'hash', 'tx_hash', 'txHash', 'id'];
+      for (const k of keys) {
+        if (typeof result[k] === 'string' && result[k]) return result[k];
+      }
+      if (result.tx) return extractTxId(result.tx);
+      return null;
+    }
+
+    function shortHash(h) {
+      const s = String(h);
+      return s.length > 14 ? s.slice(0, 6) + '…' + s.slice(-6) : s;
+    }
+
+    // Render a tappable explorer link when EXPLORER_TX_URL_BASE is configured,
+    // otherwise a copy-on-click short hash. Always carries the .onchain-link
+    // class so the on-chain receipt is detectable in the UI / proposal tests.
+    function onchainLinkHtml(txHash) {
+      if (!txHash) return '';
+      const base = appConfig && appConfig.explorer_base;
+      const label = '⛓ ' + shortHash(txHash);
+      if (base) {
+        const url = base + encodeURIComponent(txHash);
+        return `<a href="${escHtml(url)}" target="_blank" rel="noopener noreferrer"
+          class="onchain-link text-xs text-violet-400 hover:text-violet-300 hover:underline"
+          title="View on-chain: ${escHtml(txHash)}">${label}</a>`;
+      }
+      return `<button type="button" onclick="copyText('${escHtml(txHash)}')"
+        class="onchain-link text-xs text-violet-400 hover:text-violet-300"
+        title="Copy tx reference: ${escHtml(txHash)}">${label}</button>`;
+    }
+
+    function copyText(t) {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(t);
+          showToast('Transaction reference copied', false);
+        }
+      } catch {}
+    }
+
+    // Attempt to record a guess on-chain. Returns the tx hash on success, or
+    // null on any failure / unavailability — callers must treat null as a
+    // benign "no receipt", never an error.
+    async function recordGuessOnChain(asset, roundDate, price) {
+      try {
+        if (!bridgeAvailable()) return null;
+        await loadConfig();
+        const to = appConfig && appConfig.app_pubkey;
+        if (!to) return null;
+        const roundId = String(roundDate).slice(0, 10).replace(/-/g, '');
+        const memo = `cpg:${roundId}:${asset}:${Number(price).toFixed(2)}`;
+        const result = await window.usernode.sendTransaction(to, 1, memo);
+        const txHash = extractTxId(result);
+        if (!txHash) return null;
+        try { await api('/api/guess/tx', { method: 'POST', body: JSON.stringify({ asset, tx_hash: txHash }) }); } catch {}
+        return txHash;
+      } catch {
+        return null;
+      }
+    }
+
     // ── Toast ─────────────────────────────────────────────────────────
     let toastTimer = null;
     function showToast(msg, isError) {
@@ -575,10 +660,11 @@
             const cur = state.prices[g.asset]?.usd;
             const diff = cur ? parseFloat(g.price_guess) - cur : null;
             const diffStr = diff != null ? (diff >= 0 ? '+' : '') + fmtPrice(Math.abs(diff)).replace('$','') : '';
+            const chain = g.tx_hash ? `<span class="ml-2">${onchainLinkHtml(g.tx_hash)}</span>` : '';
             return `<div class="flex justify-between items-center text-sm">
               <span class="font-mono text-ink w-10">${g.asset}</span>
               <span class="font-mono text-ink-bright">${fmtPrice(g.price_guess)}</span>
-              <span class="text-xs ${diff != null ? (diff >= 0 ? 'text-pos' : 'text-neg') : 'text-faint'}">${diff != null ? (diff >= 0 ? '+' : '-') + '$' + diffStr : ''}</span>
+              <span class="text-xs ${diff != null ? (diff >= 0 ? 'text-pos' : 'text-neg') : 'text-faint'} flex items-center">${diff != null ? (diff >= 0 ? '+' : '-') + '$' + diffStr : ''}${chain}</span>
             </div>`;
           }).join('')}
         </div>
@@ -809,30 +895,57 @@
       if (isNaN(price) || price <= 0) { showToast('Enter a valid price', true); return; }
       const msg = document.getElementById('message-input').value.trim();
 
+      const asset = state.selectedAsset;
       const btn = document.getElementById('submit-btn');
+      const statusEl = document.getElementById('my-guess-status');
       btn.disabled = true;
       btn.textContent = 'Submitting...';
 
+      // Step 1 — record the guess (source of truth). If this fails, nothing
+      // else happens.
       try {
         await api('/api/guess', {
           method: 'POST',
-          body: JSON.stringify({ asset: state.selectedAsset, price_guess: price, message: msg || null }),
+          body: JSON.stringify({ asset, price_guess: price, message: msg || null }),
         });
-        hapticTap();
-        showToast(`${state.selectedAsset} guess of ${fmtPrice(price)} recorded!`, false);
-        state.myGuesses[state.selectedAsset] = { asset: state.selectedAsset, price_guess: price, message: msg };
-        btn.textContent = 'Update Guess — 1 Token';
-        document.getElementById('existing-guess-note').classList.remove('hidden');
-        document.getElementById('my-guess-status').innerHTML =
-          `<div class="text-center text-pos text-sm py-2">Guess recorded for ${state.selectedAsset}!</div>`;
       } catch (err) {
         showToast(err.message || 'Failed to submit guess', true);
-      } finally {
         btn.disabled = false;
-        if (btn.textContent === 'Submitting...') {
-          btn.textContent = state.myGuesses[state.selectedAsset] ? 'Update Guess — 1 Token' : 'Submit Guess — 1 Token';
-        }
+        btn.textContent = state.myGuesses[asset] ? 'Update Guess — 1 Token' : 'Submit Guess — 1 Token';
+        return;
       }
+
+      hapticTap();
+      showToast(`${asset} guess of ${fmtPrice(price)} recorded!`, false);
+      state.myGuesses[asset] = { asset, price_guess: price, message: msg };
+      document.getElementById('existing-guess-note').classList.remove('hidden');
+      btn.textContent = 'Update Guess — 1 Token';
+
+      // Step 2 — best-effort on-chain receipt. Never blocks or fails the guess.
+      const canChain = bridgeAvailable();
+      statusEl.innerHTML = canChain
+        ? `<div class="text-center text-green-400 text-sm py-2">Guess recorded for ${asset}! <span class="text-zinc-400">Confirming on-chain…</span></div>`
+        : `<div class="text-center text-green-400 text-sm py-2">Guess recorded for ${asset}!</div>`;
+      if (canChain) btn.textContent = 'Confirming on-chain…';
+
+      const roundDate = new Date().toISOString().slice(0, 10);
+      const txHash = await recordGuessOnChain(asset, roundDate, price);
+
+      if (txHash) {
+        state.myGuesses[asset].tx_hash = txHash;
+        statusEl.innerHTML = `<div class="text-center text-sm py-2">
+          <span class="text-green-400">Guess recorded for ${asset}!</span>
+          <div class="mt-1 text-zinc-400">Recorded on-chain ${onchainLinkHtml(txHash)}</div>
+        </div>`;
+      } else {
+        statusEl.innerHTML = `<div class="text-center text-sm py-2">
+          <span class="text-green-400">Guess recorded for ${asset}!</span>
+          <div class="mt-1 text-zinc-500 text-xs">${canChain ? 'Saved — on-chain receipt unavailable' : 'Link a Usernode wallet to record guesses on-chain'}</div>
+        </div>`;
+      }
+
+      btn.disabled = false;
+      btn.textContent = 'Update Guess — 1 Token';
     }
 
     // ── HISTORY TABS ──────────────────────────────────────────────────
@@ -932,6 +1045,10 @@
         ? `<div class="text-right mt-1.5"><span class="text-xs text-faint">Off by ${fmtPrice(Math.abs(parseFloat(p.price_guess) - parseFloat(p.close_price)))}</span></div>`
         : '';
 
+      const chainLine = p.tx_hash
+        ? `<div class="mt-1.5 pt-1.5 border-t border-line/40">${onchainLinkHtml(p.tx_hash)}</div>`
+        : '';
+
       return `<div class="prediction-row bg-surface-2/80 rounded-xl p-3 mb-2 border border-line/50">
         <div class="flex justify-between items-center mb-2">
           <div>
@@ -952,6 +1069,7 @@
           </div>
         </div>
         ${accuracyLine}
+        ${chainLine}
       </div>`;
     }
 
@@ -1242,6 +1360,10 @@
         profileState.bio = d.bio || null;
         syncHeaderUser();
       }).catch(() => {});
+
+      // Warm the on-chain config (app address + explorer base) so receipt
+      // links resolve. Best-effort; failures degrade to the copy-hash fallback.
+      loadConfig();
 
       document.getElementById('edit-bio')?.addEventListener('input', updateBioCounter);
 

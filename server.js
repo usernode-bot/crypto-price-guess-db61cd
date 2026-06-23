@@ -197,7 +197,7 @@ app.get('/api/round/current', async (req, res) => {
     let myGuesses = [];
     if (req.user) {
       ({ rows: myGuesses } = await pool.query(
-        `SELECT asset, price_guess, message, submitted_at FROM guesses WHERE round_date = $1 AND user_id = $2`,
+        `SELECT asset, price_guess, message, tx_hash, submitted_at FROM guesses WHERE round_date = $1 AND user_id = $2`,
         [roundDate, req.user.id]
       ));
     }
@@ -227,6 +227,44 @@ app.post('/api/guess', async (req, res) => {
       RETURNING *
     `, [req.user.id, req.user.username, roundDate, asset, pg.toFixed(2), message?.slice(0, 140) || null]);
     res.json({ ok: true, guess: rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Client config for the on-chain receipt flow. Auth-gated like the rest of
+// /api/*. APP_PUBKEY is a public address (private:false in dapp.json), so it's
+// safe to hand to the authed client; EXPLORER_TX_URL_BASE is an optional public
+// explorer URL the UI appends a tx hash to.
+app.get('/api/config', (req, res) => {
+  res.json({
+    app_pubkey: process.env.APP_PUBKEY || null,
+    explorer_base: process.env.EXPLORER_TX_URL_BASE || null,
+    is_staging: IS_STAGING,
+  });
+});
+
+// Conservative tx-hash shape: hex / base58-ish refs, plus the dashed/colon'd
+// fake refs we seed in staging. Bounded length to keep junk out of the column.
+const TX_HASH_RE = /^[A-Za-z0-9_:-]{8,128}$/;
+
+// Attach an on-chain transaction reference to the caller's guess for today's
+// round. Called by the frontend after sendTransaction resolves; best-effort,
+// so a guess that never reaches this route simply has a null tx_hash.
+app.post('/api/guess/tx', async (req, res) => {
+  try {
+    const { asset, tx_hash } = req.body;
+    if (!ASSETS.includes(asset)) return res.status(400).json({ error: 'Invalid asset' });
+    if (typeof tx_hash !== 'string' || !TX_HASH_RE.test(tx_hash)) {
+      return res.status(400).json({ error: 'Invalid tx hash' });
+    }
+    const roundDate = getCurrentRoundDate();
+    const { rowCount } = await pool.query(
+      `UPDATE guesses SET tx_hash = $1 WHERE user_id = $2 AND round_date = $3 AND asset = $4`,
+      [tx_hash, req.user.id, roundDate, asset]
+    );
+    if (!rowCount) return res.status(404).json({ error: 'No guess to attach to' });
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -397,7 +435,7 @@ app.get('/api/user/me', async (req, res) => {
   try {
     const roundDate = getCurrentRoundDate();
     const { rows: todayGuesses } = await pool.query(
-      `SELECT asset, price_guess, message, submitted_at FROM guesses WHERE round_date = $1 AND user_id = $2`,
+      `SELECT asset, price_guess, message, tx_hash, submitted_at FROM guesses WHERE round_date = $1 AND user_id = $2`,
       [roundDate, req.user.id]
     );
     const { rows: gStats } = await pool.query(
@@ -438,7 +476,7 @@ app.get('/api/user/predictions', async (req, res) => {
 
     const { rows: predictions } = await pool.query(`
       SELECT
-        g.round_date, g.asset, g.price_guess, g.message, g.submitted_at,
+        g.round_date, g.asset, g.price_guess, g.message, g.tx_hash, g.submitted_at,
         r.close_price, r.pot_total,
         p.place, p.prize_tokens
       FROM guesses g
@@ -764,11 +802,17 @@ async function seedStaging() {
         const mult = 1 + dir * USER_ERR[uIdx];
         const guessPrice = parseFloat((closePrice * mult).toFixed(2));
         const submittedAt = roundDate + 'T12:00:00.000Z';
+        // Give the demo user (900001 — the ?demo=1 My Predictions view) an
+        // obviously-fake on-chain receipt on every other asset, so both the
+        // "recorded on-chain" and the "no receipt" states are visible.
+        const txHash = (w.id === 900001 && ai % 2 === 0)
+          ? `staging-demo-tx-${roundDate}-${asset}`
+          : null;
         await pool.query(
-          `INSERT INTO guesses (user_id, username, round_date, asset, price_guess, submitted_at)
-           VALUES ($1, $2, $3, $4, $5, $6)
+          `INSERT INTO guesses (user_id, username, round_date, asset, price_guess, tx_hash, submitted_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
            ON CONFLICT (user_id, round_date, asset) DO NOTHING`,
-          [w.id, w.username, roundDate, asset, guessPrice, submittedAt]
+          [w.id, w.username, roundDate, asset, guessPrice, txHash, submittedAt]
         );
         if (pi < 3) {
           await pool.query(
@@ -792,11 +836,14 @@ async function seedStaging() {
       const user = fakeUsers[ui];
       const guessPrice = parseFloat((basePrice * (1 + ui * 0.01 - 0.02)).toFixed(2));
       const submittedAt = new Date(today.getTime() - (2 + ui * 1.5) * 3600000).toISOString();
+      const txHash = (user.id === 900001 && ai % 2 === 0)
+        ? `staging-demo-tx-${todayDate}-${asset}`
+        : null;
       await pool.query(
-        `INSERT INTO guesses (user_id, username, round_date, asset, price_guess, message, submitted_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `INSERT INTO guesses (user_id, username, round_date, asset, price_guess, message, tx_hash, submitted_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          ON CONFLICT (user_id, round_date, asset) DO NOTHING`,
-        [user.id, user.username, todayDate, asset, guessPrice, messages[ui], submittedAt]
+        [user.id, user.username, todayDate, asset, guessPrice, messages[ui], txHash, submittedAt]
       );
     }
   }
@@ -851,10 +898,14 @@ async function start() {
         asset VARCHAR(10) NOT NULL,
         price_guess NUMERIC(20,2) NOT NULL,
         message VARCHAR(140),
+        tx_hash TEXT,
         submitted_at TIMESTAMPTZ DEFAULT NOW(),
         UNIQUE (user_id, round_date, asset)
       )
     `);
+    // Idempotent column add for deployments whose guesses table predates the
+    // on-chain receipt feature.
+    await pool.query(`ALTER TABLE guesses ADD COLUMN IF NOT EXISTS tx_hash TEXT`);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS results (
         id SERIAL PRIMARY KEY,

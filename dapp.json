@@ -26,6 +26,13 @@
       "required": false,
       "private": false,
       "default": ""
+    },
+    {
+      "key": "EXPLORER_TX_URL_BASE",
+      "description": "Optional public block-explorer transaction-page base URL; the on-chain receipt hash is appended to it for the 'View on-chain' link (e.g. https://explorer.example/tx/)",
+      "required": false,
+      "private": false,
+      "default": ""
     }
   ],
   "tests": [
@@ -64,6 +71,11 @@
       "name": "My Predictions tab renders prediction cards",
       "path": "/?demo=1#history",
       "expectSelector": ".prediction-row"
+    },
+    {
+      "name": "On-chain receipt link renders on a prediction card",
+      "path": "/?demo=1#history",
+      "expectSelector": ".onchain-link"
     },
     {
       "name": "Profile page renders identity card and stats",
