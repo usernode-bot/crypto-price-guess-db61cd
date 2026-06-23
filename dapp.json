@@ -45,14 +45,25 @@
       "expectSelector": ".asset-card"
     },
     {
+      "name": "Guess screen renders 1-hour preview chart",
+      "path": "/#guess",
+      "expectSelector": ".guess-chart"
+    },
+    {
       "name": "History screen renders round list",
       "path": "/#history",
       "expectSelector": ".history-round"
     },
     {
-      "name": "Leaderboard screen renders player rows",
+      "name": "Top Guessers leaderboard renders player rows",
       "path": "/#leaderboard",
-      "expectSelector": ".leaderboard-row"
+      "expectSelector": ".leaderboard-row",
+      "expectText": "Top Guessers"
+    },
+    {
+      "name": "My Predictions tab renders prediction cards",
+      "path": "/?demo=1#history",
+      "expectSelector": ".prediction-row"
     }
   ]
 }
