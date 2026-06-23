@@ -86,6 +86,9 @@
         <p class="text-xs text-zinc-600 mt-1">Resets at 00:00 UTC daily</p>
       </div>
 
+      <!-- Reward boost badge (rendered when the day's combined pot crosses the milestone) -->
+      <div id="boost-banner" class="mb-4"></div>
+
       <!-- Live price + pot grid -->
       <div id="price-grid" class="grid grid-cols-2 gap-2 mb-5"></div>
 
@@ -276,6 +279,11 @@
     const ASSETS = ['BTC','ETH','SOL','BNB','TRX','HYPE','SUI','AVAX','DOGE','ADA','DOT','MATIC'];
     const ASSET_NAMES = { BTC:'Bitcoin', ETH:'Ethereum', SOL:'Solana', BNB:'BNB', TRX:'TRON', HYPE:'Hyperliquid', SUI:'Sui', AVAX:'Avalanche', DOGE:'Dogecoin', ADA:'Cardano', DOT:'Polkadot', MATIC:'Polygon' };
 
+    // Single round-level milestone: when the combined pot across all assets
+    // reaches this many tokens, the home screen shows a visual "reward boost"
+    // badge. Purely cosmetic — no effect on payouts.
+    const BOOST_MILESTONE_TOKENS = 100;
+
     const state = {
       prices: {},
       currentRound: null,
@@ -454,9 +462,29 @@
         state.currentRound = data;
         renderMyGuessesHome(data.my_guesses || []);
         renderPriceGrid();
+        renderBoostBadge();
       } catch {
         renderMyGuessesHome([]);
+        renderBoostBadge();
       }
+    }
+
+    function renderBoostBadge() {
+      const el = document.getElementById('boost-banner');
+      if (!el) return;
+      const pots = state.currentRound?.pots || {};
+      const total = ASSETS.reduce((sum, a) => sum + (pots[a]?.pot_tokens || 0), 0);
+      if (total < BOOST_MILESTONE_TOKENS) {
+        el.innerHTML = '';
+        return;
+      }
+      el.innerHTML = `<div class="reward-boost-badge bg-gradient-to-r from-violet-600/30 to-fuchsia-600/20 border border-violet-500/50 rounded-xl px-4 py-3 flex items-center gap-3">
+        <span class="text-2xl leading-none">🚀</span>
+        <div>
+          <div class="text-sm font-bold text-violet-200">Reward Boost</div>
+          <div class="text-xs text-violet-300/80">Round pot has passed ${BOOST_MILESTONE_TOKENS} tokens — jump in.</div>
+        </div>
+      </div>`;
     }
 
     function renderMyGuessesHome(guesses) {
