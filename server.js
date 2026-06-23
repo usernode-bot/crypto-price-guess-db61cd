@@ -36,7 +36,7 @@ const PUBLIC_API_PATHS = new Set([
   // In staging these are public so proposal tests can verify dynamic selectors
   // (incl. the reward-boost badge, which sums the round pot) without the test
   // framework needing to inject auth tokens.
-  ...(IS_STAGING ? ['/api/prices', '/api/price-history', '/api/history', '/api/leaderboard', '/api/round/current', '/api/user/predictions'] : []),
+  ...(IS_STAGING ? ['/api/prices', '/api/price-history', '/api/history', '/api/leaderboard', '/api/round/current', '/api/user/predictions', '/api/profile'] : []),
 ]);
 const PUBLIC_PREFIXES = ['/explorer-api/'];
 
@@ -459,6 +459,89 @@ app.get('/api/user/predictions', async (req, res) => {
   }
 });
 
+app.get('/api/profile', async (req, res) => {
+  try {
+    const isDemo = IS_STAGING && req.query.demo === '1';
+    let userId, username;
+    if (isDemo) {
+      userId = 900001;
+      username = 'staging-alice';
+    } else if (req.user) {
+      userId = req.user.id;
+      username = req.user.username;
+    } else {
+      return res.json({
+        username: null, display_name: null, bio: null,
+        stats: { total_guesses: 0, rounds_played: 0, wins: 0, total_won: 0, accuracy_pct: null },
+      });
+    }
+
+    const { rows: profRows } = await pool.query(
+      `SELECT display_name, bio, username FROM profiles WHERE user_id = $1`, [userId]
+    );
+    const prof = profRows[0] || {};
+
+    // Lifetime stats. Accuracy mirrors /api/leaderboard's my_stats expression so
+    // the number matches the "You" row on the Board.
+    const { rows: statRows } = await pool.query(`
+      SELECT
+        (SELECT COUNT(*) FROM guesses WHERE user_id = $1) AS total_guesses,
+        (SELECT COUNT(DISTINCT round_date) FROM guesses WHERE user_id = $1) AS rounds_played,
+        (
+          SELECT ROUND((AVG(GREATEST(0, 1 - ABS(g.price_guess - r.close_price) / NULLIF(r.close_price, 0))) * 100)::numeric, 1)
+          FROM guesses g
+          JOIN results r ON r.round_date = g.round_date AND r.asset = g.asset
+          WHERE g.user_id = $1
+        ) AS accuracy_pct,
+        (SELECT ROUND(COALESCE(SUM(prize_tokens), 0)::numeric, 2) FROM payouts WHERE user_id = $1) AS total_won,
+        (SELECT COUNT(*) FILTER (WHERE place = 1) FROM payouts WHERE user_id = $1) AS wins
+    `, [userId]);
+    const s = statRows[0] || {};
+
+    res.json({
+      username: prof.username || username,
+      display_name: prof.display_name || null,
+      bio: prof.bio || null,
+      stats: {
+        total_guesses: parseInt(s.total_guesses || 0),
+        rounds_played: parseInt(s.rounds_played || 0),
+        wins: parseInt(s.wins || 0),
+        total_won: parseFloat(s.total_won || 0),
+        accuracy_pct: s.accuracy_pct != null ? parseFloat(s.accuracy_pct) : null,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/profile', async (req, res) => {
+  try {
+    const clean = (v, max) => {
+      if (typeof v !== 'string') return null;
+      const t = v.trim();
+      return t ? t.slice(0, max) : null;
+    };
+    const displayName = clean(req.body.display_name, 40);
+    const bio = clean(req.body.bio, 280);
+
+    const { rows } = await pool.query(`
+      INSERT INTO profiles (user_id, username, display_name, bio)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (user_id) DO UPDATE
+        SET display_name = EXCLUDED.display_name,
+            bio = EXCLUDED.bio,
+            username = EXCLUDED.username,
+            updated_at = NOW()
+      RETURNING display_name, bio, username
+    `, [req.user.id, req.user.username, displayName, bio]);
+
+    res.json({ ok: true, profile: rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/admin/daily-results', (_req, res) => {
   res.status(405).json({ error: 'Method Not Allowed. Use POST.' });
 });
@@ -637,6 +720,15 @@ async function seedStaging() {
 
   const today = new Date();
 
+  // Seed a profile for staging-alice (900001) — the demo user the read-only
+  // ?demo=1 paths resolve to — so the Profile screen renders populated in staging.
+  await pool.query(
+    `INSERT INTO profiles (user_id, username, display_name, bio)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (user_id) DO NOTHING`,
+    [900001, 'staging-alice', 'Staging Demo — Alice', 'Staging demo — I chase tight crypto predictions for fun.']
+  );
+
   // Seed 7 completed past rounds
   for (let daysAgo = 7; daysAgo >= 1; daysAgo--) {
     const d = new Date(today);
@@ -772,6 +864,15 @@ async function start() {
         pot_total INTEGER NOT NULL,
         processed_at TIMESTAMPTZ DEFAULT NOW(),
         UNIQUE (round_date, asset)
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS profiles (
+        user_id INTEGER PRIMARY KEY,
+        username VARCHAR(255) NOT NULL,
+        display_name VARCHAR(40),
+        bio VARCHAR(280),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
       )
     `);
     await pool.query(`
