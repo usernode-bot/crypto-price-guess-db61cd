@@ -62,18 +62,43 @@
 
   <title>Crypto Price Guess</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <script>tailwind.config = { darkMode: 'class' }</script>
+  <script>tailwind.config = {
+    darkMode: 'class',
+    theme: {
+      extend: {
+        colors: {
+          bg: '#09090b',
+          surface: '#18181b',
+          'surface-2': '#27272a',
+          line: '#3f3f46',
+          'line-soft': 'rgba(63, 63, 70, 0.5)',
+          ink: '#f4f4f5',
+          'ink-bright': '#ffffff',
+          muted: '#a1a1aa',
+          faint: '#71717a',
+          accent: '#7c3aed',
+          'accent-hover': '#8b5cf6',
+          'accent-ink': '#a78bfa',
+          pos: '#4ade80',
+          neg: '#f87171',
+          warn: '#fbbf24',
+          'toast-success': '#16a34a',
+          'toast-error': '#dc2626'
+        }
+      }
+    }
+  }</script>
 </head>
-<body class="bg-zinc-950 text-zinc-100 min-h-screen">
+<body class="bg-bg text-ink min-h-screen">
 
   <!-- Toast notification -->
   <div id="toast" class="fixed top-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg text-sm font-medium shadow-lg opacity-0 transition-opacity duration-300 pointer-events-none max-w-xs text-center"></div>
 
   <!-- Fixed header -->
-  <header class="fixed top-0 left-0 right-0 bg-zinc-900/95 backdrop-blur border-b border-zinc-800 z-40 px-4 py-3 flex justify-between items-center">
-    <span class="font-bold text-violet-400 text-sm">Crypto Price Guess</span>
-    <a href="#profile" id="header-user" class="flex items-center gap-2 text-xs text-zinc-400 hover:text-violet-300 transition-colors">
-      <span id="header-avatar" class="w-7 h-7 shrink-0 rounded-full flex items-center justify-center text-xs font-bold bg-violet-600/30 text-violet-200"></span>
+  <header class="fixed top-0 left-0 right-0 bg-surface/95 backdrop-blur border-b border-line z-40 px-4 py-3 flex justify-between items-center">
+    <span class="font-bold text-accent-ink text-sm">Crypto Price Guess</span>
+    <a href="#profile" id="header-user" class="flex items-center gap-2 text-xs text-muted hover:text-accent-ink transition-colors">
+      <span id="header-avatar" class="w-7 h-7 shrink-0 rounded-full flex items-center justify-center text-xs font-bold bg-accent/30 text-accent-ink"></span>
       <span id="header-name"></span>
     </a>
   </header>
@@ -84,9 +109,9 @@
     <!-- ===== HOME SCREEN ===== -->
     <div id="screen-home" class="screen">
       <div class="text-center py-5">
-        <p class="text-xs text-zinc-500 uppercase tracking-wider mb-1">Round closes in</p>
-        <div class="countdown-timer font-mono text-5xl font-bold text-violet-400 tracking-widest tabular-nums">--:--:--</div>
-        <p class="text-xs text-zinc-600 mt-1">Resets at 00:00 UTC daily</p>
+        <p class="text-xs text-faint uppercase tracking-wider mb-1">Round closes in</p>
+        <div class="countdown-timer font-mono text-5xl font-bold text-accent-ink tracking-widest tabular-nums">--:--:--</div>
+        <p class="text-xs text-faint mt-1">Resets at 00:00 UTC daily</p>
       </div>
 
       <!-- Reward boost badge (rendered when the day's combined pot crosses the milestone) -->
@@ -101,116 +126,116 @@
       <!-- Live round toggle -->
       <div class="mb-2">
         <button id="live-round-btn" onclick="toggleLiveRound()"
-          class="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm py-2 px-4 rounded-lg border border-zinc-700 transition-colors">
+          class="w-full bg-surface-2 hover:bg-surface text-muted text-sm py-2 px-4 rounded-lg border border-line transition-colors">
           View Live Round — all current guesses
         </button>
       </div>
       <div id="live-round-panel" class="hidden">
         <div class="mb-3 flex gap-1 flex-wrap" id="live-asset-tabs"></div>
-        <div id="live-round-content" class="text-sm text-zinc-400 py-2">Loading...</div>
+        <div id="live-round-content" class="text-sm text-muted py-2">Loading...</div>
       </div>
     </div>
 
     <!-- ===== GUESS SCREEN ===== -->
     <div id="screen-guess" class="screen hidden">
-      <h2 class="text-base font-semibold mb-3 text-zinc-300">Select asset &amp; submit prediction</h2>
+      <h2 class="text-base font-semibold mb-3 text-ink">Select asset &amp; submit prediction</h2>
 
       <!-- 12 static asset selector cards — always in DOM for proposal test -->
       <div class="grid grid-cols-4 gap-1.5 mb-5" id="asset-selector">
-        <div class="asset-card cursor-pointer rounded-xl p-2 bg-zinc-800 border-2 border-transparent text-center transition-all hover:border-violet-500 active:scale-95 select-none" data-asset="BTC" onclick="selectGuessAsset('BTC')">
-          <div class="text-xs font-bold text-white">BTC</div>
-          <div class="text-xs text-zinc-500 leading-tight">Bitcoin</div>
-          <div class="text-xs font-mono text-zinc-400 mt-0.5 truncate" id="gp-BTC">—</div>
+        <div class="asset-card cursor-pointer rounded-xl p-2 bg-surface-2 border-2 border-transparent text-center transition-all hover:border-accent active:scale-95 select-none" data-asset="BTC" onclick="selectGuessAsset('BTC')">
+          <div class="text-xs font-bold text-ink-bright">BTC</div>
+          <div class="text-xs text-faint leading-tight">Bitcoin</div>
+          <div class="text-xs font-mono text-muted mt-0.5 truncate" id="gp-BTC">—</div>
         </div>
-        <div class="asset-card cursor-pointer rounded-xl p-2 bg-zinc-800 border-2 border-transparent text-center transition-all hover:border-violet-500 active:scale-95 select-none" data-asset="ETH" onclick="selectGuessAsset('ETH')">
-          <div class="text-xs font-bold text-white">ETH</div>
-          <div class="text-xs text-zinc-500 leading-tight">Ethereum</div>
-          <div class="text-xs font-mono text-zinc-400 mt-0.5 truncate" id="gp-ETH">—</div>
+        <div class="asset-card cursor-pointer rounded-xl p-2 bg-surface-2 border-2 border-transparent text-center transition-all hover:border-accent active:scale-95 select-none" data-asset="ETH" onclick="selectGuessAsset('ETH')">
+          <div class="text-xs font-bold text-ink-bright">ETH</div>
+          <div class="text-xs text-faint leading-tight">Ethereum</div>
+          <div class="text-xs font-mono text-muted mt-0.5 truncate" id="gp-ETH">—</div>
         </div>
-        <div class="asset-card cursor-pointer rounded-xl p-2 bg-zinc-800 border-2 border-transparent text-center transition-all hover:border-violet-500 active:scale-95 select-none" data-asset="SOL" onclick="selectGuessAsset('SOL')">
-          <div class="text-xs font-bold text-white">SOL</div>
-          <div class="text-xs text-zinc-500 leading-tight">Solana</div>
-          <div class="text-xs font-mono text-zinc-400 mt-0.5 truncate" id="gp-SOL">—</div>
+        <div class="asset-card cursor-pointer rounded-xl p-2 bg-surface-2 border-2 border-transparent text-center transition-all hover:border-accent active:scale-95 select-none" data-asset="SOL" onclick="selectGuessAsset('SOL')">
+          <div class="text-xs font-bold text-ink-bright">SOL</div>
+          <div class="text-xs text-faint leading-tight">Solana</div>
+          <div class="text-xs font-mono text-muted mt-0.5 truncate" id="gp-SOL">—</div>
         </div>
-        <div class="asset-card cursor-pointer rounded-xl p-2 bg-zinc-800 border-2 border-transparent text-center transition-all hover:border-violet-500 active:scale-95 select-none" data-asset="BNB" onclick="selectGuessAsset('BNB')">
-          <div class="text-xs font-bold text-white">BNB</div>
-          <div class="text-xs text-zinc-500 leading-tight">BNB</div>
-          <div class="text-xs font-mono text-zinc-400 mt-0.5 truncate" id="gp-BNB">—</div>
+        <div class="asset-card cursor-pointer rounded-xl p-2 bg-surface-2 border-2 border-transparent text-center transition-all hover:border-accent active:scale-95 select-none" data-asset="BNB" onclick="selectGuessAsset('BNB')">
+          <div class="text-xs font-bold text-ink-bright">BNB</div>
+          <div class="text-xs text-faint leading-tight">BNB</div>
+          <div class="text-xs font-mono text-muted mt-0.5 truncate" id="gp-BNB">—</div>
         </div>
-        <div class="asset-card cursor-pointer rounded-xl p-2 bg-zinc-800 border-2 border-transparent text-center transition-all hover:border-violet-500 active:scale-95 select-none" data-asset="TRX" onclick="selectGuessAsset('TRX')">
-          <div class="text-xs font-bold text-white">TRX</div>
-          <div class="text-xs text-zinc-500 leading-tight">TRON</div>
-          <div class="text-xs font-mono text-zinc-400 mt-0.5 truncate" id="gp-TRX">—</div>
+        <div class="asset-card cursor-pointer rounded-xl p-2 bg-surface-2 border-2 border-transparent text-center transition-all hover:border-accent active:scale-95 select-none" data-asset="TRX" onclick="selectGuessAsset('TRX')">
+          <div class="text-xs font-bold text-ink-bright">TRX</div>
+          <div class="text-xs text-faint leading-tight">TRON</div>
+          <div class="text-xs font-mono text-muted mt-0.5 truncate" id="gp-TRX">—</div>
         </div>
-        <div class="asset-card cursor-pointer rounded-xl p-2 bg-zinc-800 border-2 border-transparent text-center transition-all hover:border-violet-500 active:scale-95 select-none" data-asset="HYPE" onclick="selectGuessAsset('HYPE')">
-          <div class="text-xs font-bold text-white">HYPE</div>
-          <div class="text-xs text-zinc-500 leading-tight">Hyperliquid</div>
-          <div class="text-xs font-mono text-zinc-400 mt-0.5 truncate" id="gp-HYPE">—</div>
+        <div class="asset-card cursor-pointer rounded-xl p-2 bg-surface-2 border-2 border-transparent text-center transition-all hover:border-accent active:scale-95 select-none" data-asset="HYPE" onclick="selectGuessAsset('HYPE')">
+          <div class="text-xs font-bold text-ink-bright">HYPE</div>
+          <div class="text-xs text-faint leading-tight">Hyperliquid</div>
+          <div class="text-xs font-mono text-muted mt-0.5 truncate" id="gp-HYPE">—</div>
         </div>
-        <div class="asset-card cursor-pointer rounded-xl p-2 bg-zinc-800 border-2 border-transparent text-center transition-all hover:border-violet-500 active:scale-95 select-none" data-asset="SUI" onclick="selectGuessAsset('SUI')">
-          <div class="text-xs font-bold text-white">SUI</div>
-          <div class="text-xs text-zinc-500 leading-tight">Sui</div>
-          <div class="text-xs font-mono text-zinc-400 mt-0.5 truncate" id="gp-SUI">—</div>
+        <div class="asset-card cursor-pointer rounded-xl p-2 bg-surface-2 border-2 border-transparent text-center transition-all hover:border-accent active:scale-95 select-none" data-asset="SUI" onclick="selectGuessAsset('SUI')">
+          <div class="text-xs font-bold text-ink-bright">SUI</div>
+          <div class="text-xs text-faint leading-tight">Sui</div>
+          <div class="text-xs font-mono text-muted mt-0.5 truncate" id="gp-SUI">—</div>
         </div>
-        <div class="asset-card cursor-pointer rounded-xl p-2 bg-zinc-800 border-2 border-transparent text-center transition-all hover:border-violet-500 active:scale-95 select-none" data-asset="AVAX" onclick="selectGuessAsset('AVAX')">
-          <div class="text-xs font-bold text-white">AVAX</div>
-          <div class="text-xs text-zinc-500 leading-tight">Avalanche</div>
-          <div class="text-xs font-mono text-zinc-400 mt-0.5 truncate" id="gp-AVAX">—</div>
+        <div class="asset-card cursor-pointer rounded-xl p-2 bg-surface-2 border-2 border-transparent text-center transition-all hover:border-accent active:scale-95 select-none" data-asset="AVAX" onclick="selectGuessAsset('AVAX')">
+          <div class="text-xs font-bold text-ink-bright">AVAX</div>
+          <div class="text-xs text-faint leading-tight">Avalanche</div>
+          <div class="text-xs font-mono text-muted mt-0.5 truncate" id="gp-AVAX">—</div>
         </div>
-        <div class="asset-card cursor-pointer rounded-xl p-2 bg-zinc-800 border-2 border-transparent text-center transition-all hover:border-violet-500 active:scale-95 select-none" data-asset="DOGE" onclick="selectGuessAsset('DOGE')">
-          <div class="text-xs font-bold text-white">DOGE</div>
-          <div class="text-xs text-zinc-500 leading-tight">Dogecoin</div>
-          <div class="text-xs font-mono text-zinc-400 mt-0.5 truncate" id="gp-DOGE">—</div>
+        <div class="asset-card cursor-pointer rounded-xl p-2 bg-surface-2 border-2 border-transparent text-center transition-all hover:border-accent active:scale-95 select-none" data-asset="DOGE" onclick="selectGuessAsset('DOGE')">
+          <div class="text-xs font-bold text-ink-bright">DOGE</div>
+          <div class="text-xs text-faint leading-tight">Dogecoin</div>
+          <div class="text-xs font-mono text-muted mt-0.5 truncate" id="gp-DOGE">—</div>
         </div>
-        <div class="asset-card cursor-pointer rounded-xl p-2 bg-zinc-800 border-2 border-transparent text-center transition-all hover:border-violet-500 active:scale-95 select-none" data-asset="ADA" onclick="selectGuessAsset('ADA')">
-          <div class="text-xs font-bold text-white">ADA</div>
-          <div class="text-xs text-zinc-500 leading-tight">Cardano</div>
-          <div class="text-xs font-mono text-zinc-400 mt-0.5 truncate" id="gp-ADA">—</div>
+        <div class="asset-card cursor-pointer rounded-xl p-2 bg-surface-2 border-2 border-transparent text-center transition-all hover:border-accent active:scale-95 select-none" data-asset="ADA" onclick="selectGuessAsset('ADA')">
+          <div class="text-xs font-bold text-ink-bright">ADA</div>
+          <div class="text-xs text-faint leading-tight">Cardano</div>
+          <div class="text-xs font-mono text-muted mt-0.5 truncate" id="gp-ADA">—</div>
         </div>
-        <div class="asset-card cursor-pointer rounded-xl p-2 bg-zinc-800 border-2 border-transparent text-center transition-all hover:border-violet-500 active:scale-95 select-none" data-asset="DOT" onclick="selectGuessAsset('DOT')">
-          <div class="text-xs font-bold text-white">DOT</div>
-          <div class="text-xs text-zinc-500 leading-tight">Polkadot</div>
-          <div class="text-xs font-mono text-zinc-400 mt-0.5 truncate" id="gp-DOT">—</div>
+        <div class="asset-card cursor-pointer rounded-xl p-2 bg-surface-2 border-2 border-transparent text-center transition-all hover:border-accent active:scale-95 select-none" data-asset="DOT" onclick="selectGuessAsset('DOT')">
+          <div class="text-xs font-bold text-ink-bright">DOT</div>
+          <div class="text-xs text-faint leading-tight">Polkadot</div>
+          <div class="text-xs font-mono text-muted mt-0.5 truncate" id="gp-DOT">—</div>
         </div>
-        <div class="asset-card cursor-pointer rounded-xl p-2 bg-zinc-800 border-2 border-transparent text-center transition-all hover:border-violet-500 active:scale-95 select-none" data-asset="MATIC" onclick="selectGuessAsset('MATIC')">
-          <div class="text-xs font-bold text-white">MATIC</div>
-          <div class="text-xs text-zinc-500 leading-tight">Polygon</div>
-          <div class="text-xs font-mono text-zinc-400 mt-0.5 truncate" id="gp-MATIC">—</div>
+        <div class="asset-card cursor-pointer rounded-xl p-2 bg-surface-2 border-2 border-transparent text-center transition-all hover:border-accent active:scale-95 select-none" data-asset="MATIC" onclick="selectGuessAsset('MATIC')">
+          <div class="text-xs font-bold text-ink-bright">MATIC</div>
+          <div class="text-xs text-faint leading-tight">Polygon</div>
+          <div class="text-xs font-mono text-muted mt-0.5 truncate" id="gp-MATIC">—</div>
         </div>
       </div>
 
       <!-- 1-hour price preview chart (purely informational, never constrains the guess).
            Always present + visible on the Guess screen; fills in once an asset is selected. -->
-      <div id="guess-chart" class="guess-chart mb-3 bg-zinc-800/50 rounded-xl p-3 border border-zinc-700/50">
-        <p class="text-xs text-zinc-500 text-center py-3">Tap an asset to preview its last hour</p>
+      <div id="guess-chart" class="guess-chart mb-3 bg-surface-2/50 rounded-xl p-3 border border-line/50">
+        <p class="text-xs text-faint text-center py-3">Tap an asset to preview its last hour</p>
       </div>
 
       <!-- Guess form (shown after asset selected) -->
-      <div id="no-asset-msg" class="text-center text-zinc-500 text-sm py-6 bg-zinc-800/50 rounded-xl">
+      <div id="no-asset-msg" class="text-center text-faint text-sm py-6 bg-surface-2/50 rounded-xl">
         Tap an asset above to start your prediction
       </div>
       <div id="guess-form-inner" class="hidden">
-        <div id="closing-warning" class="hidden text-xs text-red-400 text-center mb-3 p-2 bg-red-400/10 rounded-lg border border-red-400/20">
+        <div id="closing-warning" class="hidden text-xs text-neg text-center mb-3 p-2 bg-red-400/10 rounded-lg border border-red-400/20">
           Round closing soon — new guesses may not be accepted.
         </div>
-        <div id="existing-guess-note" class="hidden text-xs text-amber-400 text-center mb-3 p-2 bg-amber-400/10 rounded-lg border border-amber-400/20">
+        <div id="existing-guess-note" class="hidden text-xs text-warn text-center mb-3 p-2 bg-amber-400/10 rounded-lg border border-amber-400/20">
           You already guessed on this asset today. Submitting will overwrite your previous guess and cost 1 more token.
         </div>
         <div class="mb-3">
-          <label class="block text-xs text-zinc-400 mb-1">Your predicted closing price (USD) for <span id="selected-asset-label" class="text-violet-400 font-semibold"></span></label>
+          <label class="block text-xs text-muted mb-1">Your predicted closing price (USD) for <span id="selected-asset-label" class="text-accent-ink font-semibold"></span></label>
           <input id="price-input" type="number" step="0.01" min="0.000001"
-            class="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-xl font-mono text-white focus:outline-none focus:border-violet-500 transition-colors"
+            class="w-full bg-surface-2 border border-line rounded-xl px-4 py-3 text-xl font-mono text-ink-bright focus:outline-none focus:border-accent transition-colors"
             placeholder="Enter price in USD">
           <div id="delta-preview" class="text-xs mt-1 h-4"></div>
         </div>
         <div class="mb-4">
-          <label class="block text-xs text-zinc-400 mb-1">Note (optional, up to 140 chars)</label>
+          <label class="block text-xs text-muted mb-1">Note (optional, up to 140 chars)</label>
           <textarea id="message-input" maxlength="140" rows="2"
-            class="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-2 text-sm text-white resize-none focus:outline-none focus:border-violet-500 transition-colors"
+            class="w-full bg-surface-2 border border-line rounded-xl px-4 py-2 text-sm text-ink-bright resize-none focus:outline-none focus:border-accent transition-colors"
             placeholder="Trash talk, reasoning, market vibes..."></textarea>
         </div>
         <button id="submit-btn" onclick="submitGuess()" disabled
-          class="w-full bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold py-3 rounded-xl text-base transition-colors">
+          class="w-full bg-accent hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed text-ink-bright font-bold py-3 rounded-xl text-base transition-colors">
           Submit Guess — 1 Token
         </button>
       </div>
@@ -222,9 +247,9 @@
     <div id="screen-history" class="screen hidden">
       <div class="flex gap-2 mb-4">
         <button onclick="switchHistoryTab('results')" id="ht-tab-results"
-          class="hist-tab flex-1 py-1.5 rounded-lg text-xs font-semibold bg-violet-600 text-white transition-colors">Results</button>
+          class="hist-tab flex-1 py-1.5 rounded-lg text-xs font-semibold bg-accent text-ink-bright transition-colors">Results</button>
         <button onclick="switchHistoryTab('mine')" id="ht-tab-mine"
-          class="hist-tab flex-1 py-1.5 rounded-lg text-xs font-semibold bg-zinc-700 text-zinc-300 transition-colors">My Predictions</button>
+          class="hist-tab flex-1 py-1.5 rounded-lg text-xs font-semibold bg-surface text-ink transition-colors">My Predictions</button>
       </div>
       <div id="history-results-panel">
         <div id="history-list"></div>
@@ -236,14 +261,14 @@
 
     <!-- ===== LEADERBOARD SCREEN ===== -->
     <div id="screen-leaderboard" class="screen hidden">
-      <h2 class="text-base font-semibold mb-3 text-zinc-300">Top Guessers</h2>
+      <h2 class="text-base font-semibold mb-3 text-ink">Top Guessers</h2>
       <div class="flex gap-2 mb-4">
         <button onclick="loadLeaderboard('alltime')" id="lb-tab-alltime"
-          class="lb-tab flex-1 py-1.5 rounded-lg text-xs font-semibold bg-violet-600 text-white transition-colors">All Time</button>
+          class="lb-tab flex-1 py-1.5 rounded-lg text-xs font-semibold bg-accent text-ink-bright transition-colors">All Time</button>
         <button onclick="loadLeaderboard('week')" id="lb-tab-week"
-          class="lb-tab flex-1 py-1.5 rounded-lg text-xs font-semibold bg-zinc-700 text-zinc-300 transition-colors">This Week</button>
+          class="lb-tab flex-1 py-1.5 rounded-lg text-xs font-semibold bg-surface text-ink transition-colors">This Week</button>
         <button onclick="loadLeaderboard('month')" id="lb-tab-month"
-          class="lb-tab flex-1 py-1.5 rounded-lg text-xs font-semibold bg-zinc-700 text-zinc-300 transition-colors">This Month</button>
+          class="lb-tab flex-1 py-1.5 rounded-lg text-xs font-semibold bg-surface text-ink transition-colors">This Month</button>
       </div>
       <div id="leaderboard-table"></div>
     </div>
@@ -289,21 +314,21 @@
   </main>
 
   <!-- Bottom navigation -->
-  <nav class="fixed bottom-0 left-0 right-0 bg-zinc-900/95 backdrop-blur border-t border-zinc-800 z-40">
+  <nav class="fixed bottom-0 left-0 right-0 bg-surface/95 backdrop-blur border-t border-line z-40">
     <div class="max-w-lg mx-auto flex">
-      <a href="#home" class="nav-btn flex-1 flex flex-col items-center py-2.5 text-zinc-400 hover:text-violet-400 transition-colors" data-screen="home">
+      <a href="#home" class="nav-btn flex-1 flex flex-col items-center py-2.5 text-muted hover:text-accent-ink transition-colors" data-screen="home">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
         <span class="text-xs mt-0.5">Home</span>
       </a>
-      <a href="#guess" class="nav-btn flex-1 flex flex-col items-center py-2.5 text-zinc-400 hover:text-violet-400 transition-colors" data-screen="guess">
+      <a href="#guess" class="nav-btn flex-1 flex flex-col items-center py-2.5 text-muted hover:text-accent-ink transition-colors" data-screen="guess">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
         <span class="text-xs mt-0.5">Guess</span>
       </a>
-      <a href="#history" class="nav-btn flex-1 flex flex-col items-center py-2.5 text-zinc-400 hover:text-violet-400 transition-colors" data-screen="history">
+      <a href="#history" class="nav-btn flex-1 flex flex-col items-center py-2.5 text-muted hover:text-accent-ink transition-colors" data-screen="history">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
         <span class="text-xs mt-0.5">History</span>
       </a>
-      <a href="#leaderboard" class="nav-btn flex-1 flex flex-col items-center py-2.5 text-zinc-400 hover:text-violet-400 transition-colors" data-screen="leaderboard">
+      <a href="#leaderboard" class="nav-btn flex-1 flex flex-col items-center py-2.5 text-muted hover:text-accent-ink transition-colors" data-screen="leaderboard">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
         <span class="text-xs mt-0.5">Board</span>
       </a>
@@ -359,7 +384,7 @@
       const el = document.getElementById('toast');
       el.textContent = msg;
       el.className = 'fixed top-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg text-sm font-medium shadow-lg pointer-events-none max-w-xs text-center opacity-100 transition-opacity duration-300 '
-        + (isError ? 'bg-red-600 text-white' : 'bg-green-600 text-white');
+        + (isError ? 'bg-toast-error text-ink-bright' : 'bg-toast-success text-ink-bright');
       if (toastTimer) clearTimeout(toastTimer);
       toastTimer = setTimeout(() => {
         el.className = el.className.replace('opacity-100', 'opacity-0');
@@ -434,8 +459,8 @@
 
       document.querySelectorAll('.nav-btn').forEach(btn => {
         const active = btn.dataset.screen === screen;
-        btn.classList.toggle('text-violet-400', active);
-        btn.classList.toggle('text-zinc-400', !active);
+        btn.classList.toggle('text-accent-ink', active);
+        btn.classList.toggle('text-muted', !active);
       });
 
       if (screen === 'home') loadHome();
@@ -483,20 +508,20 @@
         const priceStr = p ? fmtPrice(p.usd) : '—';
         const chg = p ? p.change24h : null;
         const chgStr = chg != null ? (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%' : '';
-        const chgColor = chg == null ? 'text-zinc-500' : chg >= 0 ? 'text-green-400' : 'text-red-400';
+        const chgColor = chg == null ? 'text-faint' : chg >= 0 ? 'text-pos' : 'text-neg';
         const pot = state.currentRound?.pots?.[a]?.pot_tokens ?? 0;
-        return `<div class="bg-zinc-800/80 rounded-xl p-3 border border-zinc-700/50">
+        return `<div class="bg-surface-2/80 rounded-xl p-3 border border-line/50">
           <div class="flex justify-between items-start mb-2">
             <div>
               <span class="font-bold text-sm">${a}</span>
-              <span class="text-xs text-zinc-500 ml-1">${ASSET_NAMES[a]}</span>
+              <span class="text-xs text-faint ml-1">${ASSET_NAMES[a]}</span>
             </div>
-            <button onclick="guessAsset('${a}')" class="text-xs bg-violet-600 hover:bg-violet-500 text-white px-2 py-0.5 rounded-md transition-colors">Guess</button>
+            <button onclick="guessAsset('${a}')" class="text-xs bg-accent hover:bg-accent-hover text-ink-bright px-2 py-0.5 rounded-md transition-colors">Guess</button>
           </div>
-          <div class="font-mono font-bold text-base">${priceStr}</div>
+          <div class="font-mono font-bold text-base text-ink-bright">${priceStr}</div>
           <div class="flex justify-between items-center mt-1">
             <span class="text-xs ${chgColor}">${chgStr}</span>
-            <span class="text-xs text-zinc-500">Pot: ${pot} tokens</span>
+            <span class="text-xs text-faint">Pot: ${pot} tokens</span>
           </div>
         </div>`;
       }).join('');
@@ -524,11 +549,11 @@
         el.innerHTML = '';
         return;
       }
-      el.innerHTML = `<div class="reward-boost-badge bg-gradient-to-r from-violet-600/30 to-fuchsia-600/20 border border-violet-500/50 rounded-xl px-4 py-3 flex items-center gap-3">
+      el.innerHTML = `<div class="reward-boost-badge bg-gradient-to-r from-accent/30 to-fuchsia-600/20 border border-accent/50 rounded-xl px-4 py-3 flex items-center gap-3">
         <span class="text-2xl leading-none">🚀</span>
         <div>
-          <div class="text-sm font-bold text-violet-200">Reward Boost</div>
-          <div class="text-xs text-violet-300/80">Round pot has passed ${BOOST_MILESTONE_TOKENS} tokens — jump in.</div>
+          <div class="text-sm font-bold text-accent-ink">Reward Boost</div>
+          <div class="text-xs text-accent-ink/80">Round pot has passed ${BOOST_MILESTONE_TOKENS} tokens — jump in.</div>
         </div>
       </div>`;
     }
@@ -537,23 +562,23 @@
       const el = document.getElementById('my-guesses-home');
       if (!el) return;
       if (!guesses.length) {
-        el.innerHTML = `<div class="bg-zinc-800/50 rounded-xl p-4 text-center">
-          <p class="text-zinc-500 text-sm">No guesses yet today.</p>
-          <a href="#guess" class="text-violet-400 text-sm hover:underline">Submit your predictions →</a>
+        el.innerHTML = `<div class="bg-surface-2/50 rounded-xl p-4 text-center">
+          <p class="text-faint text-sm">No guesses yet today.</p>
+          <a href="#guess" class="text-accent-ink text-sm hover:underline">Submit your predictions →</a>
         </div>`;
         return;
       }
-      el.innerHTML = `<div class="bg-zinc-800/80 rounded-xl p-4 border border-zinc-700/50">
-        <h3 class="text-sm font-semibold text-zinc-300 mb-3">My Guesses Today</h3>
+      el.innerHTML = `<div class="bg-surface-2/80 rounded-xl p-4 border border-line/50">
+        <h3 class="text-sm font-semibold text-ink mb-3">My Guesses Today</h3>
         <div class="space-y-1.5">
           ${guesses.map(g => {
             const cur = state.prices[g.asset]?.usd;
             const diff = cur ? parseFloat(g.price_guess) - cur : null;
             const diffStr = diff != null ? (diff >= 0 ? '+' : '') + fmtPrice(Math.abs(diff)).replace('$','') : '';
             return `<div class="flex justify-between items-center text-sm">
-              <span class="font-mono text-zinc-300 w-10">${g.asset}</span>
-              <span class="font-mono text-white">${fmtPrice(g.price_guess)}</span>
-              <span class="text-xs ${diff != null ? (diff >= 0 ? 'text-green-400' : 'text-red-400') : 'text-zinc-500'}">${diff != null ? (diff >= 0 ? '+' : '-') + '$' + diffStr : ''}</span>
+              <span class="font-mono text-ink w-10">${g.asset}</span>
+              <span class="font-mono text-ink-bright">${fmtPrice(g.price_guess)}</span>
+              <span class="text-xs ${diff != null ? (diff >= 0 ? 'text-pos' : 'text-neg') : 'text-faint'}">${diff != null ? (diff >= 0 ? '+' : '-') + '$' + diffStr : ''}</span>
             </div>`;
           }).join('')}
         </div>
@@ -574,25 +599,25 @@
 
       tabsEl.innerHTML = ASSETS.map(a =>
         `<button onclick="loadLiveRound('${a}')"
-          class="text-xs px-2 py-1 rounded-md ${a === selectedAsset ? 'bg-violet-600 text-white' : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'}">${a}</button>`
+          class="text-xs px-2 py-1 rounded-md ${a === selectedAsset ? 'bg-accent text-ink-bright' : 'bg-surface text-ink hover:bg-surface-2'}">${a}</button>`
       ).join('');
 
-      content.innerHTML = '<p class="text-zinc-500 text-sm">Loading...</p>';
+      content.innerHTML = '<p class="text-faint text-sm">Loading...</p>';
       try {
         const today = new Date().toISOString().slice(0,10).replace(/-/g,'');
         const { guesses } = await api(`/api/round/${today}/guesses?asset=${selectedAsset}`);
         if (!guesses.length) {
-          content.innerHTML = '<p class="text-zinc-500 text-sm text-center py-2">No guesses for this asset yet.</p>';
+          content.innerHTML = '<p class="text-faint text-sm text-center py-2">No guesses for this asset yet.</p>';
           return;
         }
         content.innerHTML = `<div class="space-y-1">
-          ${guesses.map((g, i) => `<div class="flex items-center justify-between text-xs py-1.5 px-2 rounded-lg ${i === 0 ? 'bg-violet-900/30 border border-violet-700/30' : 'bg-zinc-800/50'}">
-            <span class="text-zinc-300 font-medium">${i+1}. ${escHtml(g.username)}</span>
-            <span class="font-mono text-white">${fmtPrice(g.price_guess)}</span>
+          ${guesses.map((g, i) => `<div class="flex items-center justify-between text-xs py-1.5 px-2 rounded-lg ${i === 0 ? 'bg-accent/30 border border-accent/30' : 'bg-surface-2/50'}">
+            <span class="text-ink font-medium">${i+1}. ${escHtml(g.username)}</span>
+            <span class="font-mono text-ink-bright">${fmtPrice(g.price_guess)}</span>
           </div>`).join('')}
         </div>`;
       } catch {
-        content.innerHTML = '<p class="text-red-400 text-sm text-center py-2">Failed to load guesses.</p>';
+        content.innerHTML = '<p class="text-neg text-sm text-center py-2">Failed to load guesses.</p>';
       }
     }
 
@@ -638,7 +663,7 @@
     // ── 1-hour preview chart ──────────────────────────────────────────
     function chartPlaceholder(text) {
       const el = document.getElementById('guess-chart');
-      if (el) el.innerHTML = `<p class="text-xs text-zinc-500 text-center py-3">${text}</p>`;
+      if (el) el.innerHTML = `<p class="text-xs text-faint text-center py-3">${text}</p>`;
     }
 
     function renderGuessChart(data) {
@@ -664,7 +689,7 @@
       const areaPts = `0,${H} ` + linePts + ` ${W},${H}`;
 
       const up = (data.change_pct || 0) >= 0;
-      const stroke = up ? '#4ade80' : '#f87171';      // green-400 / red-400
+      const stroke = up ? '#4ade80' : '#f87171';
       const fill = up ? 'rgba(74,222,128,0.18)' : 'rgba(248,113,113,0.18)';
       const last = coords[coords.length - 1];
 
@@ -674,8 +699,8 @@
 
       el.innerHTML = `
         <div class="flex items-center justify-between mb-1.5">
-          <span class="text-xs text-zinc-400">Last 1h</span>
-          <span class="text-xs font-mono ${up ? 'text-green-400' : 'text-red-400'}">1h ${pctStr}</span>
+          <span class="text-xs text-muted">Last 1h</span>
+          <span class="text-xs font-mono ${up ? 'text-pos' : 'text-neg'}">1h ${pctStr}</span>
         </div>
         <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="w-full" style="height:56px" aria-hidden="true">
           <polygon points="${areaPts}" fill="${fill}" stroke="none"></polygon>
@@ -683,8 +708,8 @@
           <circle cx="${last[0].toFixed(2)}" cy="${last[1].toFixed(2)}" r="1.6" fill="${stroke}"></circle>
         </svg>
         <div class="flex items-center justify-between mt-1.5">
-          <span class="text-xs text-zinc-500">${ASSET_NAMES[data.asset] || data.asset || ''}</span>
-          <span class="text-xs font-mono text-zinc-300">${cur}</span>
+          <span class="text-xs text-faint">${ASSET_NAMES[data.asset] || data.asset || ''}</span>
+          <span class="text-xs font-mono text-ink">${cur}</span>
         </div>`;
     }
 
@@ -719,8 +744,8 @@
 
       document.querySelectorAll('.asset-card').forEach(c => {
         const isSelected = c.dataset.asset === asset;
-        c.classList.toggle('border-violet-500', isSelected);
-        c.classList.toggle('bg-violet-900/20', isSelected);
+        c.classList.toggle('border-accent', isSelected);
+        c.classList.toggle('bg-accent/20', isSelected);
         c.classList.toggle('border-transparent', !isSelected);
       });
 
@@ -768,7 +793,7 @@
       const pct = (diff / cur * 100).toFixed(2);
       const sign = diff >= 0 ? '+' : '';
       el.textContent = `${sign}${fmtPrice(Math.abs(diff)).replace('$','$')} (${sign}${pct}%) from current price`;
-      el.className = 'text-xs mt-1 h-4 ' + (diff >= 0 ? 'text-green-400' : 'text-red-400');
+      el.className = 'text-xs mt-1 h-4 ' + (diff >= 0 ? 'text-pos' : 'text-neg');
     }
 
     document.addEventListener('DOMContentLoaded', () => {
@@ -799,7 +824,7 @@
         btn.textContent = 'Update Guess — 1 Token';
         document.getElementById('existing-guess-note').classList.remove('hidden');
         document.getElementById('my-guess-status').innerHTML =
-          `<div class="text-center text-green-400 text-sm py-2">Guess recorded for ${state.selectedAsset}!</div>`;
+          `<div class="text-center text-pos text-sm py-2">Guess recorded for ${state.selectedAsset}!</div>`;
       } catch (err) {
         showToast(err.message || 'Failed to submit guess', true);
       } finally {
@@ -816,7 +841,7 @@
         const btn = document.getElementById('ht-tab-' + t);
         if (!btn) return;
         btn.className = 'hist-tab flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors '
-          + (t === tab ? 'bg-violet-600 text-white' : 'bg-zinc-700 text-zinc-300');
+          + (t === tab ? 'bg-accent text-ink-bright' : 'bg-surface text-ink');
       });
       document.getElementById('history-results-panel')?.classList.toggle('hidden', tab !== 'results');
       document.getElementById('history-mine-panel')?.classList.toggle('hidden', tab !== 'mine');
@@ -839,7 +864,7 @@
       const demoParam = params.get('demo') === '1' ? '&demo=1' : '';
 
       if (offset === 0) {
-        listEl.innerHTML = '<p class="text-zinc-500 text-sm text-center py-8">Loading...</p>';
+        listEl.innerHTML = '<p class="text-faint text-sm text-center py-8">Loading...</p>';
         myPredState.offset = 0;
         myPredState.total = 0;
       } else {
@@ -856,8 +881,8 @@
         if (offset === 0) {
           if (!predictions.length) {
             listEl.innerHTML = `<div class="text-center py-8">
-              <p class="text-zinc-500 text-sm mb-2">No predictions yet.</p>
-              <a href="#guess" class="text-violet-400 text-sm hover:underline">Head to the Guess tab to submit your first one! →</a>
+              <p class="text-faint text-sm mb-2">No predictions yet.</p>
+              <a href="#guess" class="text-accent-ink text-sm hover:underline">Head to the Guess tab to submit your first one! →</a>
             </div>`;
             return;
           }
@@ -869,7 +894,7 @@
         if (myPredState.offset < myPredState.total) {
           const remaining = myPredState.total - myPredState.offset;
           listEl.insertAdjacentHTML('beforeend', `
-            <button class="load-more-predictions w-full mt-2 py-2 text-sm text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 rounded-xl border border-zinc-700 transition-colors"
+            <button class="load-more-predictions w-full mt-2 py-2 text-sm text-muted hover:text-ink bg-surface-2 hover:bg-surface rounded-xl border border-line transition-colors"
               onclick="loadMyPredictions(${myPredState.offset}, '${listId}')">
               Load more (${remaining} remaining)
             </button>
@@ -877,7 +902,7 @@
         }
       } catch {
         if (offset === 0) {
-          listEl.innerHTML = '<p class="text-red-400 text-sm text-center py-8">Failed to load predictions.</p>';
+          listEl.innerHTML = '<p class="text-neg text-sm text-center py-8">Failed to load predictions.</p>';
         }
       }
     }
@@ -889,7 +914,7 @@
 
       let badge;
       if (!isSettled) {
-        badge = '<span class="text-xs px-2 py-0.5 rounded-full bg-zinc-700/80 text-zinc-400">Pending</span>';
+        badge = '<span class="text-xs px-2 py-0.5 rounded-full bg-surface/80 text-muted">Pending</span>';
       } else if (hasPlacement) {
         const placeLabel = ['', '1st', '2nd', '3rd'][p.place] || (p.place + 'th');
         const tokStr = parseFloat(p.prize_tokens).toFixed(4);
@@ -900,30 +925,30 @@
             : 'bg-amber-900/30 text-amber-400 border border-amber-700/30';
         badge = `<span class="text-xs px-2 py-0.5 rounded-full ${color}">${placeLabel} +${tokStr} tok</span>`;
       } else {
-        badge = '<span class="text-xs px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-500 border border-zinc-700/50">No placement</span>';
+        badge = '<span class="text-xs px-2 py-0.5 rounded-full bg-surface-2 text-faint border border-line/50">No placement</span>';
       }
 
       const accuracyLine = isSettled
-        ? `<div class="text-right mt-1.5"><span class="text-xs text-zinc-500">Off by ${fmtPrice(Math.abs(parseFloat(p.price_guess) - parseFloat(p.close_price)))}</span></div>`
+        ? `<div class="text-right mt-1.5"><span class="text-xs text-faint">Off by ${fmtPrice(Math.abs(parseFloat(p.price_guess) - parseFloat(p.close_price)))}</span></div>`
         : '';
 
-      return `<div class="prediction-row bg-zinc-800/80 rounded-xl p-3 mb-2 border border-zinc-700/50">
+      return `<div class="prediction-row bg-surface-2/80 rounded-xl p-3 mb-2 border border-line/50">
         <div class="flex justify-between items-center mb-2">
           <div>
-            <span class="text-xs text-zinc-500">${fmtDate(p.round_date)}</span>
-            <span class="ml-2 text-sm font-bold text-violet-300">${escHtml(p.asset)}</span>
-            <span class="text-xs text-zinc-500 ml-1">${escHtml(assetName)}</span>
+            <span class="text-xs text-faint">${fmtDate(p.round_date)}</span>
+            <span class="ml-2 text-sm font-bold text-accent-ink">${escHtml(p.asset)}</span>
+            <span class="text-xs text-faint ml-1">${escHtml(assetName)}</span>
           </div>
           ${badge}
         </div>
         <div class="flex justify-between items-end">
           <div>
-            <div class="text-xs text-zinc-500 mb-0.5">Your guess</div>
-            <div class="font-mono text-sm text-white">${fmtPrice(p.price_guess)}</div>
+            <div class="text-xs text-faint mb-0.5">Your guess</div>
+            <div class="font-mono text-sm text-ink-bright">${fmtPrice(p.price_guess)}</div>
           </div>
           <div class="text-right">
-            <div class="text-xs text-zinc-500 mb-0.5">Actual close</div>
-            <div class="font-mono text-sm ${isSettled ? 'text-white' : 'text-zinc-500'}">${isSettled ? fmtPrice(p.close_price) : 'Pending'}</div>
+            <div class="text-xs text-faint mb-0.5">Actual close</div>
+            <div class="font-mono text-sm ${isSettled ? 'text-ink-bright' : 'text-faint'}">${isSettled ? fmtPrice(p.close_price) : 'Pending'}</div>
           </div>
         </div>
         ${accuracyLine}
@@ -933,31 +958,31 @@
     // ── HISTORY ───────────────────────────────────────────────────────
     async function loadHistory() {
       const listEl = document.getElementById('history-list');
-      listEl.innerHTML = '<p class="text-zinc-500 text-sm text-center py-8">Loading history...</p>';
+      listEl.innerHTML = '<p class="text-faint text-sm text-center py-8">Loading history...</p>';
       try {
         const { history } = await api('/api/history');
         if (!history.length) {
-          listEl.innerHTML = '<p class="text-zinc-500 text-sm text-center py-8">Results will appear here after the first round closes.</p>';
+          listEl.innerHTML = '<p class="text-faint text-sm text-center py-8">Results will appear here after the first round closes.</p>';
           return;
         }
         listEl.innerHTML = history.map(r => {
           const dateStr = fmtDate(r.round_date);
           const roundId = fmtRoundId(r.round_date);
-          return `<div class="history-round bg-zinc-800/80 rounded-xl mb-3 border border-zinc-700/50 overflow-hidden">
-            <button class="w-full flex justify-between items-center p-4 text-left hover:bg-zinc-700/30 transition-colors" onclick="toggleHistoryRound(this, '${roundId}')">
+          return `<div class="history-round bg-surface-2/80 rounded-xl mb-3 border border-line/50 overflow-hidden">
+            <button class="w-full flex justify-between items-center p-4 text-left hover:bg-surface/30 transition-colors" onclick="toggleHistoryRound(this, '${roundId}')">
               <div>
                 <div class="font-semibold text-sm">${dateStr}</div>
-                <div class="text-xs text-zinc-500 mt-0.5">${r.assets_processed} assets &bull; ${r.total_pot} tokens in pot</div>
+                <div class="text-xs text-faint mt-0.5">${r.assets_processed} assets &bull; ${r.total_pot} tokens in pot</div>
               </div>
-              <svg class="w-4 h-4 text-zinc-500 chevron transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+              <svg class="w-4 h-4 text-faint chevron transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
             </button>
             <div class="round-detail hidden px-4 pb-4" id="rd-${roundId}">
-              <p class="text-zinc-500 text-xs text-center py-2">Loading...</p>
+              <p class="text-faint text-xs text-center py-2">Loading...</p>
             </div>
           </div>`;
         }).join('');
       } catch {
-        listEl.innerHTML = '<p class="text-red-400 text-sm text-center py-8">Failed to load history.</p>';
+        listEl.innerHTML = '<p class="text-neg text-sm text-center py-8">Failed to load history.</p>';
       }
     }
 
@@ -982,23 +1007,23 @@
         const { results } = await api(`/api/round/${roundId}/results`);
         detail.innerHTML = results.map(r => {
           const payoutRows = (r.payouts || []).slice(0, 3).map(p =>
-            `<div class="flex justify-between text-xs py-1 border-t border-zinc-700/50">
-              <span class="text-zinc-400">${place(p.place)} ${escHtml(p.username)}</span>
-              <span class="font-mono text-zinc-300">${fmtPrice(p.price_guess)}</span>
-              <span class="text-green-400 font-mono">+${parseFloat(p.prize_tokens).toFixed(4)} tok</span>
+            `<div class="flex justify-between text-xs py-1 border-t border-line/50">
+              <span class="text-muted">${place(p.place)} ${escHtml(p.username)}</span>
+              <span class="font-mono text-ink-bright">${fmtPrice(p.price_guess)}</span>
+              <span class="text-pos font-mono">+${parseFloat(p.prize_tokens).toFixed(4)} tok</span>
             </div>`
-          ).join('') || '<div class="text-xs text-zinc-500 pt-1">No paid places</div>';
+          ).join('') || '<div class="text-xs text-faint pt-1">No paid places</div>';
 
           return `<div class="mb-4">
             <div class="flex justify-between items-center mb-1">
-              <span class="text-sm font-bold text-violet-300">${r.asset}</span>
-              <span class="text-xs text-zinc-500">Close: <span class="text-white font-mono">${fmtPrice(r.close_price)}</span> &bull; Pot: ${r.pot_total}</span>
+              <span class="text-sm font-bold text-accent-ink">${r.asset}</span>
+              <span class="text-xs text-faint">Close: <span class="text-ink-bright font-mono">${fmtPrice(r.close_price)}</span> &bull; Pot: ${r.pot_total}</span>
             </div>
             ${payoutRows}
           </div>`;
-        }).join('<hr class="border-zinc-700/50 my-2">');
+        }).join('<hr class="border-line/50 my-2">');
       } catch {
-        detail.innerHTML = '<p class="text-red-400 text-xs text-center py-2">Failed to load results.</p>';
+        detail.innerHTML = '<p class="text-neg text-xs text-center py-2">Failed to load results.</p>';
       }
     }
 
@@ -1011,21 +1036,21 @@
         const btn = document.getElementById('lb-tab-' + p);
         if (!btn) return;
         btn.className = 'lb-tab flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors '
-          + (p === period ? 'bg-violet-600 text-white' : 'bg-zinc-700 text-zinc-300');
+          + (p === period ? 'bg-accent text-ink-bright' : 'bg-surface text-ink');
       });
 
       const tableEl = document.getElementById('leaderboard-table');
-      tableEl.innerHTML = '<p class="text-zinc-500 text-sm text-center py-8">Loading...</p>';
+      tableEl.innerHTML = '<p class="text-faint text-sm text-center py-8">Loading...</p>';
 
       try {
         const { leaderboard, my_stats } = await api(`/api/leaderboard?period=${period}`);
 
         if (!leaderboard.length) {
-          tableEl.innerHTML = '<p class="text-zinc-500 text-sm text-center py-8">No results yet for this period.</p>';
+          tableEl.innerHTML = '<p class="text-faint text-sm text-center py-8">No results yet for this period.</p>';
           return;
         }
 
-        const header = `<div class="grid grid-cols-12 gap-1 text-xs text-zinc-500 px-3 py-2 mb-1">
+        const header = `<div class="grid grid-cols-12 gap-1 text-xs text-faint px-3 py-2 mb-1">
           <span class="col-span-2">Rank</span>
           <span class="col-span-5">Player</span>
           <span class="col-span-3 text-right">Accuracy</span>
@@ -1035,41 +1060,41 @@
         const rows = leaderboard.map((row, i) => {
           const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '';
           const podium = [
-            'bg-gradient-to-r from-amber-500/20 to-zinc-800/40 border border-amber-500/40',
-            'bg-gradient-to-r from-zinc-400/15 to-zinc-800/40 border border-zinc-400/40',
-            'bg-gradient-to-r from-orange-700/20 to-zinc-800/40 border border-orange-700/40',
+            'bg-gradient-to-r from-amber-500/20 to-surface-2/40 border border-amber-500/40',
+            'bg-gradient-to-r from-zinc-400/15 to-surface-2/40 border border-zinc-400/40',
+            'bg-gradient-to-r from-orange-700/20 to-surface-2/40 border border-orange-700/40',
           ];
-          const rowCls = i < 3 ? podium[i] : 'bg-zinc-800/60';
+          const rowCls = i < 3 ? podium[i] : 'bg-surface-2/60';
           const avatarCls = i === 0 ? 'bg-amber-500/30 text-amber-200'
             : i === 1 ? 'bg-zinc-400/30 text-zinc-100'
             : i === 2 ? 'bg-orange-700/30 text-orange-200'
-            : 'bg-violet-600/30 text-violet-200';
+            : 'bg-accent/30 text-accent-ink';
           return `<div class="leaderboard-row grid grid-cols-12 gap-1 items-center text-sm px-3 py-2.5 rounded-lg mb-1 ${rowCls}">
-            <span class="col-span-2 text-zinc-300 ${medal ? 'text-lg' : 'text-xs'}">${medal || (i+1)}</span>
+            <span class="col-span-2 text-ink ${medal ? 'text-lg' : 'text-xs'}">${medal || (i+1)}</span>
             <span class="col-span-5 flex items-center gap-2 min-w-0">
               <span class="w-6 h-6 shrink-0 rounded-full flex items-center justify-center text-xs font-bold ${avatarCls}">${escHtml((row.username || '?')[0]).toUpperCase()}</span>
               <span class="truncate font-medium">${escHtml(row.username)}</span>
             </span>
-            <span class="col-span-3 text-right font-mono text-violet-300 text-xs">${row.accuracy_pct != null ? parseFloat(row.accuracy_pct).toFixed(1) + '%' : '—'}</span>
-            <span class="col-span-2 text-right font-mono text-green-400 text-xs">${parseFloat(row.total_won).toFixed(2)}</span>
+            <span class="col-span-3 text-right font-mono text-accent-ink text-xs">${row.accuracy_pct != null ? parseFloat(row.accuracy_pct).toFixed(1) + '%' : '—'}</span>
+            <span class="col-span-2 text-right font-mono text-pos text-xs">${parseFloat(row.total_won).toFixed(2)}</span>
           </div>`;
         }).join('');
 
-        const myRow = my_stats ? `<div class="mt-3 pt-3 border-t border-zinc-700/50">
-          <div class="leaderboard-row grid grid-cols-12 gap-1 items-center text-sm px-3 py-2.5 rounded-lg bg-zinc-700/30 border border-zinc-600/30">
-            <span class="col-span-2 text-zinc-400 text-xs">You</span>
+        const myRow = my_stats ? `<div class="mt-3 pt-3 border-t border-line/50">
+          <div class="leaderboard-row grid grid-cols-12 gap-1 items-center text-sm px-3 py-2.5 rounded-lg bg-surface/30 border border-surface">
+            <span class="col-span-2 text-muted text-xs">You</span>
             <span class="col-span-5 flex items-center gap-2 min-w-0">
-              <span class="w-6 h-6 shrink-0 rounded-full flex items-center justify-center text-xs font-bold bg-violet-600/40 text-violet-100">★</span>
-              <span class="truncate font-medium text-violet-300">me</span>
+              <span class="w-6 h-6 shrink-0 rounded-full flex items-center justify-center text-xs font-bold bg-accent/40 text-accent-ink">★</span>
+              <span class="truncate font-medium text-accent-ink">me</span>
             </span>
-            <span class="col-span-3 text-right font-mono text-violet-300 text-xs">${my_stats.accuracy_pct != null ? parseFloat(my_stats.accuracy_pct).toFixed(1) + '%' : '—'}</span>
-            <span class="col-span-2 text-right font-mono text-green-400 text-xs">${parseFloat(my_stats.total_won || 0).toFixed(2)}</span>
+            <span class="col-span-3 text-right font-mono text-accent-ink text-xs">${my_stats.accuracy_pct != null ? parseFloat(my_stats.accuracy_pct).toFixed(1) + '%' : '—'}</span>
+            <span class="col-span-2 text-right font-mono text-pos text-xs">${parseFloat(my_stats.total_won || 0).toFixed(2)}</span>
           </div>
         </div>` : '';
 
         tableEl.innerHTML = header + rows + myRow;
       } catch {
-        tableEl.innerHTML = '<p class="text-red-400 text-sm text-center py-8">Failed to load leaderboard.</p>';
+        tableEl.innerHTML = '<p class="text-neg text-sm text-center py-8">Failed to load leaderboard.</p>';
       }
     }
 
