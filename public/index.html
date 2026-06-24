@@ -91,6 +91,9 @@
       }
     }
   }</script>
+  <!-- Hosted Usernode bridge: provides window.usernode.sendTransaction /
+       getNodeAddress for recording each guess on-chain. Never vendor this. -->
+  <script src="https://social-vibecoding.usernodelabs.org/usernode-bridge/v1/bridge.js"></script>
 </head>
 <body class="bg-bg text-ink min-h-screen">
 
@@ -375,6 +378,7 @@
       isStaging: false,
       walletLinked: false,
       walletAddress: null,
+      explorerBase: '',
     };
 
     // ── API helper ──────────────────────────────────────────────────────
@@ -391,13 +395,11 @@
     }
 
     // ── On-chain config + wallet (Usernode bridge) ────────────────────
-    // Round id in the same UTC form the server uses (getCurrentRoundDate).
     function currentRoundDate() {
       return new Date().toISOString().slice(0, 10);
     }
 
-    // Short, human-readable reference for a transaction hash.
-    function shortTx(h) {
+    function shortHash(h) {
       if (!h) return '';
       const s = String(h);
       return s.length <= 14 ? s : s.slice(0, 8) + '…' + s.slice(-4);
@@ -409,12 +411,12 @@
       _configPromise = api('/api/config').then(cfg => {
         state.appPubkey = cfg.app_pubkey || '';
         state.chainId = cfg.chain_id || 'usernode';
-        state.isStaging = !!cfg.staging;
+        state.isStaging = !!(cfg.staging || cfg.is_staging);
+        state.explorerBase = cfg.explorer_base || '';
       }).catch(() => {});
       return _configPromise;
     }
 
-    // Resolve the player's linked wallet address via the bridge, or null.
     async function getWalletAddress() {
       try {
         if (window.usernode && typeof usernode.getNodeAddress === 'function') {
@@ -425,7 +427,6 @@
       return null;
     }
 
-    // Refresh wallet-linked state and toggle the inline notice + submit gate.
     async function refreshWalletStatus() {
       await loadConfig();
       const addr = await getWalletAddress();
@@ -438,14 +439,43 @@
       validatePriceInput();
     }
 
-    // Pull a transaction hash out of whatever sendTransaction resolves to.
     function extractTxHash(r) {
       if (!r) return null;
       if (typeof r === 'string') return r;
-      return r.txHash || r.tx_hash || r.hash || r.txId || r.tx_id || r.id || null;
+      const keys = ['txHash', 'tx_hash', 'hash', 'txId', 'tx_id', 'txid', 'id'];
+      for (const k of keys) {
+        if (typeof r[k] === 'string' && r[k]) return r[k];
+      }
+      if (r.tx) return extractTxHash(r.tx);
+      return null;
     }
 
-    // Send the 1-token guess payment to the app wallet, awaiting confirmation.
+    // Render a tappable explorer link when explorer_base is configured,
+    // otherwise a copy-on-click short hash. Always carries .onchain-link.
+    function onchainLinkHtml(txHash) {
+      if (!txHash) return '';
+      const base = state.explorerBase;
+      const label = '⛓ ' + shortHash(txHash);
+      if (base) {
+        const url = base + encodeURIComponent(txHash);
+        return `<a href="${escHtml(url)}" target="_blank" rel="noopener noreferrer"
+          class="onchain-link text-xs text-violet-400 hover:text-violet-300 hover:underline"
+          title="View on-chain: ${escHtml(txHash)}">${label}</a>`;
+      }
+      return `<button type="button" onclick="copyText('${escHtml(txHash)}')"
+        class="onchain-link text-xs text-violet-400 hover:text-violet-300"
+        title="Copy tx reference: ${escHtml(txHash)}">${label}</button>`;
+    }
+
+    function copyText(t) {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(t);
+          showToast('Transaction reference copied', false);
+        }
+      } catch {}
+    }
+
     async function sendGuessTransaction(memo) {
       if (!(window.usernode && typeof usernode.sendTransaction === 'function')) {
         throw new Error('Wallet bridge unavailable');
@@ -654,10 +684,11 @@
             const cur = state.prices[g.asset]?.usd;
             const diff = cur ? parseFloat(g.price_guess) - cur : null;
             const diffStr = diff != null ? (diff >= 0 ? '+' : '') + fmtPrice(Math.abs(diff)).replace('$','') : '';
+            const chain = g.tx_hash ? `<span class="ml-2">${onchainLinkHtml(g.tx_hash)}</span>` : '';
             return `<div class="flex justify-between items-center text-sm">
               <span class="font-mono text-ink w-10">${g.asset}</span>
               <span class="font-mono text-ink-bright">${fmtPrice(g.price_guess)}</span>
-              <span class="text-xs ${diff != null ? (diff >= 0 ? 'text-pos' : 'text-neg') : 'text-faint'}">${diff != null ? (diff >= 0 ? '+' : '-') + '$' + diffStr : ''}</span>
+              <span class="text-xs ${diff != null ? (diff >= 0 ? 'text-pos' : 'text-neg') : 'text-faint'} flex items-center">${diff != null ? (diff >= 0 ? '+' : '-') + '$' + diffStr : ''}${chain}</span>
             </div>`;
           }).join('')}
         </div>
@@ -904,6 +935,8 @@
       btn.disabled = true;
       btn.textContent = 'Confirming on-chain…';
 
+      // Step 1 — record the guess (source of truth). If this fails, nothing
+      // else happens.
       try {
         // Reuse a stashed tx for this (round, asset, price) if a prior attempt
         // confirmed on-chain but failed to record server-side — avoids paying
@@ -938,7 +971,7 @@
         document.getElementById('existing-guess-note').classList.remove('hidden');
         document.getElementById('my-guess-status').innerHTML =
           `<div class="text-center text-pos text-sm py-2">Guess recorded for ${asset}!
-             <span class="block text-xs text-faint font-mono mt-0.5">tx ${escHtml(shortTx(txHash))}</span>
+             <div class="mt-1">${onchainLinkHtml(txHash)}</div>
            </div>`;
       } catch (err) {
         // A stash that survives here is a confirmed payment whose record failed;
@@ -1050,8 +1083,8 @@
         ? `<div class="text-right mt-1.5"><span class="text-xs text-faint">Off by ${fmtPrice(Math.abs(parseFloat(p.price_guess) - parseFloat(p.close_price)))}</span></div>`
         : '';
 
-      const txLine = p.tx_hash
-        ? `<div class="mt-1.5 pt-1.5 border-t border-line/40"><span class="text-xs text-faint font-mono">tx ${escHtml(shortTx(p.tx_hash))}</span></div>`
+      const chainLine = p.tx_hash
+        ? `<div class="mt-1.5 pt-1.5 border-t border-line/40">${onchainLinkHtml(p.tx_hash)}</div>`
         : '';
 
       return `<div class="prediction-row bg-surface-2/80 rounded-xl p-3 mb-2 border border-line/50">
@@ -1074,7 +1107,7 @@
           </div>
         </div>
         ${accuracyLine}
-        ${txLine}
+        ${chainLine}
       </div>`;
     }
 
@@ -1368,6 +1401,10 @@
         profileState.bio = d.bio || null;
         syncHeaderUser();
       }).catch(() => {});
+
+      // Warm the on-chain config (app address + explorer base) so receipt
+      // links resolve. Best-effort; failures degrade to the copy-hash fallback.
+      loadConfig();
 
       document.getElementById('edit-bio')?.addEventListener('input', updateBioCounter);
 
