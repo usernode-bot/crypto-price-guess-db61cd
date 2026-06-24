@@ -2,12 +2,22 @@ const express = require('express');
 const path = require('path');
 const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
+const { verifyGuessTransaction } = require('./lib/tx-match');
 
 const app = express();
 const port = process.env.PORT || 3000;
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const JWT_SECRET = process.env.JWT_SECRET;
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+
+// On-chain config. Each guess is a 1-token transfer from the player's linked
+// Usernode wallet to APP_PUBKEY; CHAIN_ID is used for the explorer/node tx
+// lookup during verification.
+const APP_PUBKEY = process.env.APP_PUBKEY || '';
+const CHAIN_ID = process.env.CHAIN_ID || 'usernode';
+// Placeholder app wallet surfaced to the staging frontend so the guess form
+// still has a destination for its mock transaction when APP_PUBKEY is unset.
+const STAGING_APP_PUBKEY = 'ut1stagingappwallet000000000000000000';
 
 const ASSETS = ['BTC', 'ETH', 'SOL', 'BNB', 'TRX', 'HYPE', 'SUI', 'AVAX', 'DOGE', 'ADA', 'DOT', 'MATIC'];
 const COINGECKO_IDS = {
@@ -33,6 +43,9 @@ const STAGING_BASE_PRICE = {
 const PUBLIC_API_PATHS = new Set([
   '/health',
   '/api/admin/daily-results',
+  // Public so the frontend can read the app wallet / chain id before auth is
+  // established and so staging proposal tests can load it without a token.
+  '/api/config',
   // In staging these are public so proposal tests can verify dynamic selectors
   // (incl. the reward-boost badge, which sums the round pot) without the test
   // framework needing to inject auth tokens.
@@ -56,6 +69,18 @@ app.use((req, res, next) => {
 });
 
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+
+// On-chain config for the frontend: where to send the 1-token guess payment,
+// which chain to await it on, and whether we're in staging (mock chain).
+app.get('/api/config', (_req, res) => {
+  res.json({
+    app_pubkey: APP_PUBKEY || (IS_STAGING ? STAGING_APP_PUBKEY : ''),
+    chain_id: CHAIN_ID,
+    staging: IS_STAGING,
+    is_staging: IS_STAGING,
+    explorer_base: process.env.EXPLORER_TX_URL_BASE || null,
+  });
+});
 
 function getCurrentRoundDate() {
   return new Date().toISOString().slice(0, 10);
@@ -209,7 +234,7 @@ app.get('/api/round/current', async (req, res) => {
 
 app.post('/api/guess', async (req, res) => {
   try {
-    const { asset, price_guess, message } = req.body;
+    const { asset, price_guess, message, tx_hash } = req.body;
     if (!ASSETS.includes(asset)) return res.status(400).json({ error: 'Invalid asset' });
     const pg = parseFloat(price_guess);
     if (isNaN(pg) || pg <= 0) return res.status(400).json({ error: 'Invalid price' });
@@ -218,30 +243,75 @@ app.post('/api/guess', async (req, res) => {
     const secs = now.getUTCHours() * 3600 + now.getUTCMinutes() * 60 + now.getUTCSeconds();
     if (secs >= 86390) return res.status(400).json({ error: 'Round is closing — try again tomorrow' });
 
+    // A guess is an on-chain 1-token payment from the player's wallet to the
+    // app wallet; it is only recorded once that transaction is verified.
+    if (!req.user.usernode_pubkey) {
+      return res.status(400).json({ error: 'Link your Usernode wallet to play' });
+    }
+    const txHash = typeof tx_hash === 'string' ? tx_hash.trim() : '';
+    if (!txHash) return res.status(400).json({ error: 'Missing transaction' });
+
     const roundDate = getCurrentRoundDate();
+    const priceStr = pg.toFixed(2);
+
+    // Idempotency: a confirmed payment whose POST was retried (e.g. the client
+    // stashed the tx_hash after a transient failure) returns the existing row
+    // rather than charging again.
+    const { rows: existing } = await pool.query(
+      `SELECT * FROM guesses WHERE user_id = $1 AND round_date = $2 AND asset = $3`,
+      [req.user.id, roundDate, asset]
+    );
+    if (existing.length && existing[0].tx_hash && existing[0].tx_hash === txHash) {
+      return res.json({ ok: true, guess: existing[0] });
+    }
+
+    // Replay protection: a transaction may back at most one guess row.
+    const { rows: dup } = await pool.query(
+      `SELECT 1 FROM guesses
+       WHERE tx_hash = $1 AND NOT (user_id = $2 AND round_date = $3 AND asset = $4)
+       LIMIT 1`,
+      [txHash, req.user.id, roundDate, asset]
+    );
+    if (dup.length) {
+      return res.status(400).json({ error: 'This transaction has already been used for a guess' });
+    }
+
+    // Memo binds the on-chain payment to this exact guess. Built server-side
+    // from validated inputs — a client-supplied memo is never trusted.
+    const expectedMemo = `cpg|v1|${roundDate}|${asset}|${priceStr}`;
+
+    // Staging has no real chain (APP_PRIVKEY is a dummy), so the on-chain
+    // verification is skipped and the mock tx_hash is accepted as-is.
+    if (!IS_STAGING) {
+      const verdict = await verifyGuessTransaction({
+        txHash,
+        chainId: CHAIN_ID,
+        expectedTo: APP_PUBKEY,
+        expectedFrom: req.user.usernode_pubkey,
+        expectedAmount: 1,
+        expectedMemo,
+      });
+      if (!verdict.ok) {
+        return res.status(400).json({ error: 'Guess transaction could not be verified' });
+      }
+    }
+
     const { rows } = await pool.query(`
-      INSERT INTO guesses (user_id, username, round_date, asset, price_guess, message)
-      VALUES ($1, $2, $3, $4, $5, $6)
+      INSERT INTO guesses (user_id, username, round_date, asset, price_guess, message, tx_hash, tx_from, tx_confirmed_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
       ON CONFLICT (user_id, round_date, asset) DO UPDATE
-        SET price_guess = EXCLUDED.price_guess, message = EXCLUDED.message, submitted_at = NOW()
+        SET price_guess = EXCLUDED.price_guess,
+            message = EXCLUDED.message,
+            tx_hash = EXCLUDED.tx_hash,
+            tx_from = EXCLUDED.tx_from,
+            tx_confirmed_at = NOW(),
+            submitted_at = NOW()
       RETURNING *
-    `, [req.user.id, req.user.username, roundDate, asset, pg.toFixed(2), message?.slice(0, 140) || null]);
+    `, [req.user.id, req.user.username, roundDate, asset, priceStr, message?.slice(0, 140) || null, txHash, req.user.usernode_pubkey]);
     res.json({ ok: true, guess: rows[0] });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-});
-
-// Client config for the on-chain receipt flow. Auth-gated like the rest of
-// /api/*. APP_PUBKEY is a public address (private:false in dapp.json), so it's
-// safe to hand to the authed client; EXPLORER_TX_URL_BASE is an optional public
-// explorer URL the UI appends a tx hash to.
-app.get('/api/config', (req, res) => {
-  res.json({
-    app_pubkey: process.env.APP_PUBKEY || null,
-    explorer_base: process.env.EXPLORER_TX_URL_BASE || null,
-    is_staging: IS_STAGING,
-  });
 });
 
 // Conservative tx-hash shape: hex / base58-ish refs, plus the dashed/colon'd
@@ -809,10 +879,10 @@ async function seedStaging() {
           ? `staging-demo-tx-${roundDate}-${asset}`
           : null;
         await pool.query(
-          `INSERT INTO guesses (user_id, username, round_date, asset, price_guess, tx_hash, submitted_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
+          `INSERT INTO guesses (user_id, username, round_date, asset, price_guess, submitted_at, tx_hash, tx_from, tx_confirmed_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
            ON CONFLICT (user_id, round_date, asset) DO NOTHING`,
-          [w.id, w.username, roundDate, asset, guessPrice, txHash, submittedAt]
+          [w.id, w.username, roundDate, asset, guessPrice, submittedAt, txHash, txHash ? `ut1-${w.username}` : null, txHash ? submittedAt : null]
         );
         if (pi < 3) {
           await pool.query(
@@ -840,10 +910,10 @@ async function seedStaging() {
         ? `staging-demo-tx-${todayDate}-${asset}`
         : null;
       await pool.query(
-        `INSERT INTO guesses (user_id, username, round_date, asset, price_guess, message, tx_hash, submitted_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO guesses (user_id, username, round_date, asset, price_guess, message, submitted_at, tx_hash, tx_from, tx_confirmed_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          ON CONFLICT (user_id, round_date, asset) DO NOTHING`,
-        [user.id, user.username, todayDate, asset, guessPrice, messages[ui], txHash, submittedAt]
+        [user.id, user.username, todayDate, asset, guessPrice, messages[ui], submittedAt, txHash, txHash ? `ut1-${user.username}` : null, txHash ? submittedAt : null]
       );
     }
   }
@@ -864,10 +934,10 @@ async function seedStaging() {
       const guessPrice = parseFloat((basePrice * (1 + ui * 0.008 - 0.03)).toFixed(2));
       const submittedAt = new Date(today.getTime() - (1 + ui * 0.75) * 3600000).toISOString();
       await pool.query(
-        `INSERT INTO guesses (user_id, username, round_date, asset, price_guess, message, submitted_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `INSERT INTO guesses (user_id, username, round_date, asset, price_guess, message, submitted_at, tx_hash, tx_from, tx_confirmed_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $7)
          ON CONFLICT (user_id, round_date, asset) DO NOTHING`,
-        [user.id, user.username, todayDate, asset, guessPrice, 'Staging demo — boosting the pot', submittedAt]
+        [user.id, user.username, todayDate, asset, guessPrice, 'Staging demo — boosting the pot', submittedAt, `staging-tx-${todayDate}-${asset}-${user.id}`, `ut1-${user.username}`]
       );
     }
   }
@@ -903,9 +973,10 @@ async function start() {
         UNIQUE (user_id, round_date, asset)
       )
     `);
-    // Idempotent column add for deployments whose guesses table predates the
-    // on-chain receipt feature.
     await pool.query(`ALTER TABLE guesses ADD COLUMN IF NOT EXISTS tx_hash TEXT`);
+    await pool.query(`ALTER TABLE guesses ADD COLUMN IF NOT EXISTS tx_from TEXT`);
+    await pool.query(`ALTER TABLE guesses ADD COLUMN IF NOT EXISTS tx_confirmed_at TIMESTAMPTZ`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS guesses_tx_hash_uq ON guesses (tx_hash) WHERE tx_hash IS NOT NULL`);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS results (
         id SERIAL PRIMARY KEY,

@@ -28,6 +28,13 @@
       "default": ""
     },
     {
+      "key": "CHAIN_ID",
+      "description": "Usernode chain id used to look up and verify each guess's on-chain payment transaction",
+      "required": false,
+      "private": false,
+      "default": "usernode"
+    },
+    {
       "key": "EXPLORER_TX_URL_BASE",
       "description": "Optional public block-explorer transaction-page base URL; the on-chain receipt hash is appended to it for the 'View on-chain' link (e.g. https://explorer.example/tx/)",
       "required": false,

@@ -61,6 +61,9 @@
   </script>
 
   <title>Crypto Price Guess</title>
+  <!-- Usernode bridge — centrally hosted, never vendored. Provides the wallet
+       methods (getNodeAddress, sendTransaction) used to pay for each guess. -->
+  <script src="https://social-vibecoding.usernodelabs.org/usernode-bridge/v1/bridge.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>tailwind.config = {
     darkMode: 'class',
@@ -218,11 +221,14 @@
         Tap an asset above to start your prediction
       </div>
       <div id="guess-form-inner" class="hidden">
+        <div id="wallet-notice" class="wallet-notice hidden text-xs text-warn text-center mb-3 p-2 bg-amber-400/10 rounded-lg border border-amber-400/20">
+          Link your Usernode wallet to play — each guess sends a 1-token transaction.
+        </div>
         <div id="closing-warning" class="hidden text-xs text-neg text-center mb-3 p-2 bg-red-400/10 rounded-lg border border-red-400/20">
           Round closing soon — new guesses may not be accepted.
         </div>
         <div id="existing-guess-note" class="hidden text-xs text-warn text-center mb-3 p-2 bg-amber-400/10 rounded-lg border border-amber-400/20">
-          You already guessed on this asset today. Submitting will overwrite your previous guess and cost 1 more token.
+          Submitting again sends another 1-token transaction and replaces your previous guess.
         </div>
         <div class="mb-3">
           <label class="block text-xs text-muted mb-1">Your predicted closing price (USD) for <span id="selected-asset-label" class="text-accent-ink font-semibold"></span></label>
@@ -366,6 +372,13 @@
       liveRoundOpen: false,
       currentLbPeriod: 'alltime',
       chartTimer: null,
+      // On-chain config + wallet status (filled from /api/config and the bridge).
+      appPubkey: '',
+      chainId: 'usernode',
+      isStaging: false,
+      walletLinked: false,
+      walletAddress: null,
+      explorerBase: '',
     };
 
     // ── API helper ──────────────────────────────────────────────────────
@@ -381,46 +394,67 @@
       return res.json();
     }
 
-    // ── On-chain receipts ─────────────────────────────────────────────
-    // Config (app receiving address + optional explorer URL) is fetched once
-    // and cached. Recording a guess on-chain is strictly best-effort: the
-    // guess is already persisted server-side before we ever touch the bridge.
-    let appConfig = null;
-    async function loadConfig() {
-      if (appConfig) return appConfig;
-      try { appConfig = await api('/api/config'); } catch { appConfig = {}; }
-      return appConfig;
-    }
-
-    function bridgeAvailable() {
-      return typeof window !== 'undefined'
-        && window.usernode
-        && typeof window.usernode.sendTransaction === 'function';
-    }
-
-    // Pull a tx reference out of whatever sendTransaction resolved to, mirroring
-    // the bridge's own key precedence.
-    function extractTxId(result) {
-      if (!result) return null;
-      const keys = ['tx_id', 'txid', 'txId', 'hash', 'tx_hash', 'txHash', 'id'];
-      for (const k of keys) {
-        if (typeof result[k] === 'string' && result[k]) return result[k];
-      }
-      if (result.tx) return extractTxId(result.tx);
-      return null;
+    // ── On-chain config + wallet (Usernode bridge) ────────────────────
+    function currentRoundDate() {
+      return new Date().toISOString().slice(0, 10);
     }
 
     function shortHash(h) {
+      if (!h) return '';
       const s = String(h);
-      return s.length > 14 ? s.slice(0, 6) + '…' + s.slice(-6) : s;
+      return s.length <= 14 ? s : s.slice(0, 8) + '…' + s.slice(-4);
     }
 
-    // Render a tappable explorer link when EXPLORER_TX_URL_BASE is configured,
-    // otherwise a copy-on-click short hash. Always carries the .onchain-link
-    // class so the on-chain receipt is detectable in the UI / proposal tests.
+    let _configPromise = null;
+    function loadConfig() {
+      if (_configPromise) return _configPromise;
+      _configPromise = api('/api/config').then(cfg => {
+        state.appPubkey = cfg.app_pubkey || '';
+        state.chainId = cfg.chain_id || 'usernode';
+        state.isStaging = !!(cfg.staging || cfg.is_staging);
+        state.explorerBase = cfg.explorer_base || '';
+      }).catch(() => {});
+      return _configPromise;
+    }
+
+    async function getWalletAddress() {
+      try {
+        if (window.usernode && typeof usernode.getNodeAddress === 'function') {
+          const addr = await usernode.getNodeAddress();
+          if (addr) return typeof addr === 'string' ? addr : (addr.address || addr.pubkey || null);
+        }
+      } catch {}
+      return null;
+    }
+
+    async function refreshWalletStatus() {
+      await loadConfig();
+      const addr = await getWalletAddress();
+      state.walletAddress = addr;
+      // In staging the bridge runs in mock mode and may not surface an address;
+      // treat the wallet as linked so the form is exercisable.
+      state.walletLinked = !!addr || state.isStaging;
+      const notice = document.getElementById('wallet-notice');
+      if (notice) notice.classList.toggle('hidden', state.walletLinked);
+      validatePriceInput();
+    }
+
+    function extractTxHash(r) {
+      if (!r) return null;
+      if (typeof r === 'string') return r;
+      const keys = ['txHash', 'tx_hash', 'hash', 'txId', 'tx_id', 'txid', 'id'];
+      for (const k of keys) {
+        if (typeof r[k] === 'string' && r[k]) return r[k];
+      }
+      if (r.tx) return extractTxHash(r.tx);
+      return null;
+    }
+
+    // Render a tappable explorer link when explorer_base is configured,
+    // otherwise a copy-on-click short hash. Always carries .onchain-link.
     function onchainLinkHtml(txHash) {
       if (!txHash) return '';
-      const base = appConfig && appConfig.explorer_base;
+      const base = state.explorerBase;
       const label = '⛓ ' + shortHash(txHash);
       if (base) {
         const url = base + encodeURIComponent(txHash);
@@ -442,25 +476,15 @@
       } catch {}
     }
 
-    // Attempt to record a guess on-chain. Returns the tx hash on success, or
-    // null on any failure / unavailability — callers must treat null as a
-    // benign "no receipt", never an error.
-    async function recordGuessOnChain(asset, roundDate, price) {
-      try {
-        if (!bridgeAvailable()) return null;
-        await loadConfig();
-        const to = appConfig && appConfig.app_pubkey;
-        if (!to) return null;
-        const roundId = String(roundDate).slice(0, 10).replace(/-/g, '');
-        const memo = `cpg:${roundId}:${asset}:${Number(price).toFixed(2)}`;
-        const result = await window.usernode.sendTransaction(to, 1, memo);
-        const txHash = extractTxId(result);
-        if (!txHash) return null;
-        try { await api('/api/guess/tx', { method: 'POST', body: JSON.stringify({ asset, tx_hash: txHash }) }); } catch {}
-        return txHash;
-      } catch {
-        return null;
+    async function sendGuessTransaction(memo) {
+      if (!(window.usernode && typeof usernode.sendTransaction === 'function')) {
+        throw new Error('Wallet bridge unavailable');
       }
+      if (!state.appPubkey) throw new Error('App wallet not configured');
+      const result = await usernode.sendTransaction(state.appPubkey, 1, memo);
+      const hash = extractTxHash(result);
+      if (!hash) throw new Error('Transaction not confirmed');
+      return hash;
     }
 
     // ── Toast ─────────────────────────────────────────────────────────
@@ -714,7 +738,7 @@
 
     // ── GUESS ─────────────────────────────────────────────────────────
     async function loadGuess() {
-      await Promise.all([loadPricesGuess(), loadMyGuessesForGuessScreen()]);
+      await Promise.all([loadPricesGuess(), loadMyGuessesForGuessScreen(), refreshWalletStatus()]);
       if (state.pendingAsset) {
         selectGuessAsset(state.pendingAsset);
         state.pendingAsset = null;
@@ -866,7 +890,7 @@
     function validatePriceInput() {
       const val = parseFloat(document.getElementById('price-input')?.value);
       const btn = document.getElementById('submit-btn');
-      if (btn) btn.disabled = !(state.selectedAsset && val > 0);
+      if (btn) btn.disabled = !(state.selectedAsset && val > 0 && state.walletLinked);
     }
 
     function updateDeltaPreview() {
@@ -891,61 +915,75 @@
 
     async function submitGuess() {
       if (!state.selectedAsset) return;
+      if (!state.walletLinked) { showToast('Link your Usernode wallet to play', true); return; }
       const price = parseFloat(document.getElementById('price-input').value);
       if (isNaN(price) || price <= 0) { showToast('Enter a valid price', true); return; }
+      // Check the round-closing cutoff BEFORE asking the wallet to pay, so a
+      // token is never spent into a round that won't accept the guess.
+      if (isClosingSoon()) { showToast('Round is closing — try again tomorrow', true); return; }
       const msg = document.getElementById('message-input').value.trim();
 
       const asset = state.selectedAsset;
+      const roundDate = currentRoundDate();
+      const priceStr = price.toFixed(2);
+      const memo = `cpg|v1|${roundDate}|${asset}|${priceStr}`;
+      const stashKey = `cpg_tx:${roundDate}:${asset}`;
+      const hadGuess = !!state.myGuesses[asset];
+
       const btn = document.getElementById('submit-btn');
-      const statusEl = document.getElementById('my-guess-status');
+      const idleLabel = hadGuess ? 'Update Guess — 1 Token' : 'Submit Guess — 1 Token';
       btn.disabled = true;
-      btn.textContent = 'Submitting...';
+      btn.textContent = 'Confirming on-chain…';
 
       // Step 1 — record the guess (source of truth). If this fails, nothing
       // else happens.
       try {
+        // Reuse a stashed tx for this (round, asset, price) if a prior attempt
+        // confirmed on-chain but failed to record server-side — avoids paying
+        // twice. A price change invalidates the stash (its memo no longer fits).
+        let txHash = null;
+        try {
+          const stash = localStorage.getItem(stashKey);
+          if (stash) {
+            const sep = stash.indexOf('|');
+            const stashPrice = sep >= 0 ? stash.slice(0, sep) : '';
+            const stashHash = sep >= 0 ? stash.slice(sep + 1) : '';
+            if (stashPrice === priceStr && stashHash) txHash = stashHash;
+            else localStorage.removeItem(stashKey);
+          }
+        } catch {}
+
+        if (!txHash) {
+          txHash = await sendGuessTransaction(memo);
+          try { localStorage.setItem(stashKey, `${priceStr}|${txHash}`); } catch {}
+        }
+
         await api('/api/guess', {
           method: 'POST',
-          body: JSON.stringify({ asset, price_guess: price, message: msg || null }),
+          body: JSON.stringify({ asset, price_guess: price, message: msg || null, tx_hash: txHash }),
         });
+        try { localStorage.removeItem(stashKey); } catch {}
+
+        hapticTap();
+        showToast(`${asset} guess of ${fmtPrice(price)} recorded on-chain!`, false);
+        state.myGuesses[asset] = { asset, price_guess: price, message: msg, tx_hash: txHash };
+        btn.textContent = 'Update Guess — 1 Token';
+        document.getElementById('existing-guess-note').classList.remove('hidden');
+        document.getElementById('my-guess-status').innerHTML =
+          `<div class="text-center text-pos text-sm py-2">Guess recorded for ${asset}!
+             <div class="mt-1">${onchainLinkHtml(txHash)}</div>
+           </div>`;
       } catch (err) {
-        showToast(err.message || 'Failed to submit guess', true);
+        // A stash that survives here is a confirmed payment whose record failed;
+        // it stays so the next tap retries the POST instead of re-charging.
+        const m = (err && err.message) || '';
+        const txFailed = /not confirmed|bridge unavailable|wallet|reject|cancel|denied|timeout/i.test(m);
+        showToast(txFailed ? 'Transaction not confirmed — your guess was not submitted' : (m || 'Failed to submit guess'), true);
+      } finally {
         btn.disabled = false;
-        btn.textContent = state.myGuesses[asset] ? 'Update Guess — 1 Token' : 'Submit Guess — 1 Token';
-        return;
+        if (btn.textContent === 'Confirming on-chain…') btn.textContent = idleLabel;
+        validatePriceInput();
       }
-
-      hapticTap();
-      showToast(`${asset} guess of ${fmtPrice(price)} recorded!`, false);
-      state.myGuesses[asset] = { asset, price_guess: price, message: msg };
-      document.getElementById('existing-guess-note').classList.remove('hidden');
-      btn.textContent = 'Update Guess — 1 Token';
-
-      // Step 2 — best-effort on-chain receipt. Never blocks or fails the guess.
-      const canChain = bridgeAvailable();
-      statusEl.innerHTML = canChain
-        ? `<div class="text-center text-green-400 text-sm py-2">Guess recorded for ${asset}! <span class="text-zinc-400">Confirming on-chain…</span></div>`
-        : `<div class="text-center text-green-400 text-sm py-2">Guess recorded for ${asset}!</div>`;
-      if (canChain) btn.textContent = 'Confirming on-chain…';
-
-      const roundDate = new Date().toISOString().slice(0, 10);
-      const txHash = await recordGuessOnChain(asset, roundDate, price);
-
-      if (txHash) {
-        state.myGuesses[asset].tx_hash = txHash;
-        statusEl.innerHTML = `<div class="text-center text-sm py-2">
-          <span class="text-green-400">Guess recorded for ${asset}!</span>
-          <div class="mt-1 text-zinc-400">Recorded on-chain ${onchainLinkHtml(txHash)}</div>
-        </div>`;
-      } else {
-        statusEl.innerHTML = `<div class="text-center text-sm py-2">
-          <span class="text-green-400">Guess recorded for ${asset}!</span>
-          <div class="mt-1 text-zinc-500 text-xs">${canChain ? 'Saved — on-chain receipt unavailable' : 'Link a Usernode wallet to record guesses on-chain'}</div>
-        </div>`;
-      }
-
-      btn.disabled = false;
-      btn.textContent = 'Update Guess — 1 Token';
     }
 
     // ── HISTORY TABS ──────────────────────────────────────────────────
@@ -1352,6 +1390,9 @@
 
     // ── Boot ─────────────────────────────────────────────────────────
     window.addEventListener('DOMContentLoaded', () => {
+      // On-chain config (app wallet + chain id) for the guess payment flow.
+      loadConfig();
+
       // Load user info for the header avatar + name (prefers display name if set).
       const demoParam = params.get('demo') === '1' ? '?demo=1' : '';
       api('/api/profile' + demoParam).then(d => {
