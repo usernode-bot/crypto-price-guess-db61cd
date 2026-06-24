@@ -147,66 +147,66 @@
       <h2 class="text-base font-semibold mb-3 text-ink">Select asset &amp; submit prediction</h2>
 
       <!-- 12 static asset selector cards — always in DOM for proposal test -->
-      <div class="grid grid-cols-4 gap-1.5 mb-5" id="asset-selector">
+      <div class="grid grid-cols-3 gap-1.5 mb-5" id="asset-selector">
         <div class="asset-card cursor-pointer rounded-xl p-2 bg-surface-2 border-2 border-transparent text-center transition-all hover:border-accent active:scale-95 select-none" data-asset="BTC" onclick="selectGuessAsset('BTC')">
           <div class="text-xs font-bold text-ink-bright">BTC</div>
           <div class="text-xs text-faint leading-tight">Bitcoin</div>
-          <div class="text-xs font-mono text-muted mt-0.5 truncate" id="gp-BTC">—</div>
+          <div class="gp-price font-mono text-muted mt-0.5 whitespace-nowrap overflow-hidden" id="gp-BTC">—</div>
         </div>
         <div class="asset-card cursor-pointer rounded-xl p-2 bg-surface-2 border-2 border-transparent text-center transition-all hover:border-accent active:scale-95 select-none" data-asset="ETH" onclick="selectGuessAsset('ETH')">
           <div class="text-xs font-bold text-ink-bright">ETH</div>
           <div class="text-xs text-faint leading-tight">Ethereum</div>
-          <div class="text-xs font-mono text-muted mt-0.5 truncate" id="gp-ETH">—</div>
+          <div class="gp-price font-mono text-muted mt-0.5 whitespace-nowrap overflow-hidden" id="gp-ETH">—</div>
         </div>
         <div class="asset-card cursor-pointer rounded-xl p-2 bg-surface-2 border-2 border-transparent text-center transition-all hover:border-accent active:scale-95 select-none" data-asset="SOL" onclick="selectGuessAsset('SOL')">
           <div class="text-xs font-bold text-ink-bright">SOL</div>
           <div class="text-xs text-faint leading-tight">Solana</div>
-          <div class="text-xs font-mono text-muted mt-0.5 truncate" id="gp-SOL">—</div>
+          <div class="gp-price font-mono text-muted mt-0.5 whitespace-nowrap overflow-hidden" id="gp-SOL">—</div>
         </div>
         <div class="asset-card cursor-pointer rounded-xl p-2 bg-surface-2 border-2 border-transparent text-center transition-all hover:border-accent active:scale-95 select-none" data-asset="BNB" onclick="selectGuessAsset('BNB')">
           <div class="text-xs font-bold text-ink-bright">BNB</div>
           <div class="text-xs text-faint leading-tight">BNB</div>
-          <div class="text-xs font-mono text-muted mt-0.5 truncate" id="gp-BNB">—</div>
+          <div class="gp-price font-mono text-muted mt-0.5 whitespace-nowrap overflow-hidden" id="gp-BNB">—</div>
         </div>
         <div class="asset-card cursor-pointer rounded-xl p-2 bg-surface-2 border-2 border-transparent text-center transition-all hover:border-accent active:scale-95 select-none" data-asset="TRX" onclick="selectGuessAsset('TRX')">
           <div class="text-xs font-bold text-ink-bright">TRX</div>
           <div class="text-xs text-faint leading-tight">TRON</div>
-          <div class="text-xs font-mono text-muted mt-0.5 truncate" id="gp-TRX">—</div>
+          <div class="gp-price font-mono text-muted mt-0.5 whitespace-nowrap overflow-hidden" id="gp-TRX">—</div>
         </div>
         <div class="asset-card cursor-pointer rounded-xl p-2 bg-surface-2 border-2 border-transparent text-center transition-all hover:border-accent active:scale-95 select-none" data-asset="HYPE" onclick="selectGuessAsset('HYPE')">
           <div class="text-xs font-bold text-ink-bright">HYPE</div>
           <div class="text-xs text-faint leading-tight">Hyperliquid</div>
-          <div class="text-xs font-mono text-muted mt-0.5 truncate" id="gp-HYPE">—</div>
+          <div class="gp-price font-mono text-muted mt-0.5 whitespace-nowrap overflow-hidden" id="gp-HYPE">—</div>
         </div>
         <div class="asset-card cursor-pointer rounded-xl p-2 bg-surface-2 border-2 border-transparent text-center transition-all hover:border-accent active:scale-95 select-none" data-asset="SUI" onclick="selectGuessAsset('SUI')">
           <div class="text-xs font-bold text-ink-bright">SUI</div>
           <div class="text-xs text-faint leading-tight">Sui</div>
-          <div class="text-xs font-mono text-muted mt-0.5 truncate" id="gp-SUI">—</div>
+          <div class="gp-price font-mono text-muted mt-0.5 whitespace-nowrap overflow-hidden" id="gp-SUI">—</div>
         </div>
         <div class="asset-card cursor-pointer rounded-xl p-2 bg-surface-2 border-2 border-transparent text-center transition-all hover:border-accent active:scale-95 select-none" data-asset="AVAX" onclick="selectGuessAsset('AVAX')">
           <div class="text-xs font-bold text-ink-bright">AVAX</div>
           <div class="text-xs text-faint leading-tight">Avalanche</div>
-          <div class="text-xs font-mono text-muted mt-0.5 truncate" id="gp-AVAX">—</div>
+          <div class="gp-price font-mono text-muted mt-0.5 whitespace-nowrap overflow-hidden" id="gp-AVAX">—</div>
         </div>
         <div class="asset-card cursor-pointer rounded-xl p-2 bg-surface-2 border-2 border-transparent text-center transition-all hover:border-accent active:scale-95 select-none" data-asset="DOGE" onclick="selectGuessAsset('DOGE')">
           <div class="text-xs font-bold text-ink-bright">DOGE</div>
           <div class="text-xs text-faint leading-tight">Dogecoin</div>
-          <div class="text-xs font-mono text-muted mt-0.5 truncate" id="gp-DOGE">—</div>
+          <div class="gp-price font-mono text-muted mt-0.5 whitespace-nowrap overflow-hidden" id="gp-DOGE">—</div>
         </div>
         <div class="asset-card cursor-pointer rounded-xl p-2 bg-surface-2 border-2 border-transparent text-center transition-all hover:border-accent active:scale-95 select-none" data-asset="ADA" onclick="selectGuessAsset('ADA')">
           <div class="text-xs font-bold text-ink-bright">ADA</div>
           <div class="text-xs text-faint leading-tight">Cardano</div>
-          <div class="text-xs font-mono text-muted mt-0.5 truncate" id="gp-ADA">—</div>
+          <div class="gp-price font-mono text-muted mt-0.5 whitespace-nowrap overflow-hidden" id="gp-ADA">—</div>
         </div>
         <div class="asset-card cursor-pointer rounded-xl p-2 bg-surface-2 border-2 border-transparent text-center transition-all hover:border-accent active:scale-95 select-none" data-asset="DOT" onclick="selectGuessAsset('DOT')">
           <div class="text-xs font-bold text-ink-bright">DOT</div>
           <div class="text-xs text-faint leading-tight">Polkadot</div>
-          <div class="text-xs font-mono text-muted mt-0.5 truncate" id="gp-DOT">—</div>
+          <div class="gp-price font-mono text-muted mt-0.5 whitespace-nowrap overflow-hidden" id="gp-DOT">—</div>
         </div>
         <div class="asset-card cursor-pointer rounded-xl p-2 bg-surface-2 border-2 border-transparent text-center transition-all hover:border-accent active:scale-95 select-none" data-asset="MATIC" onclick="selectGuessAsset('MATIC')">
           <div class="text-xs font-bold text-ink-bright">MATIC</div>
           <div class="text-xs text-faint leading-tight">Polygon</div>
-          <div class="text-xs font-mono text-muted mt-0.5 truncate" id="gp-MATIC">—</div>
+          <div class="gp-price font-mono text-muted mt-0.5 whitespace-nowrap overflow-hidden" id="gp-MATIC">—</div>
         </div>
       </div>
 
@@ -521,6 +521,32 @@
       return '$' + n.toFixed(5);
     }
 
+    // Shrink a price label's font-size until it fits its tile width without
+    // clipping. Starts from the base size and steps down to a readable floor,
+    // so full values (BTC/ETH etc.) always show in the 3-column grid.
+    function fitPriceText(el) {
+      if (!el) return;
+      const BASE = 12; // px, ~text-xs
+      const MIN = 8;   // px floor — still legible
+      el.style.fontSize = BASE + 'px';
+      // Skip while the tile isn't laid out (screen hidden → clientWidth 0):
+      // measuring then would shrink everything to the floor. It gets re-fit
+      // when the guess screen is shown and on resize.
+      if (!el.clientWidth) return;
+      let size = BASE;
+      // scrollWidth > clientWidth means the text overflows its box.
+      while (size > MIN && el.scrollWidth > el.clientWidth) {
+        size -= 0.5;
+        el.style.fontSize = size + 'px';
+      }
+    }
+
+    // Re-fit every visible price label after the tiles change width.
+    function refitAllPrices() {
+      document.querySelectorAll('.gp-price').forEach(fitPriceText);
+    }
+    window.addEventListener('resize', refitAllPrices);
+
     function fmtDate(d) {
       const s = String(d).slice(0, 10);
       return new Date(s + 'T00:00:00Z').toLocaleDateString('en-US', {
@@ -758,7 +784,10 @@
       } catch {}
       ASSETS.forEach(a => {
         const el = document.getElementById('gp-' + a);
-        if (el) el.textContent = state.prices[a] ? fmtPrice(state.prices[a].usd) : '—';
+        if (el) {
+          el.textContent = state.prices[a] ? fmtPrice(state.prices[a].usd) : '—';
+          fitPriceText(el);
+        }
       });
     }
 
