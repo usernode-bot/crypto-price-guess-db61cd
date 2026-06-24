@@ -26,6 +26,13 @@
       "required": false,
       "private": false,
       "default": ""
+    },
+    {
+      "key": "CHAIN_ID",
+      "description": "Usernode chain id used to look up and verify each guess's on-chain payment transaction",
+      "required": false,
+      "private": false,
+      "default": "usernode"
     }
   ],
   "tests": [
