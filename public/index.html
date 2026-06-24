@@ -257,11 +257,16 @@
       <div class="flex gap-2 mb-4">
         <button onclick="switchHistoryTab('results')" id="ht-tab-results"
           class="hist-tab flex-1 py-1.5 rounded-lg text-xs font-semibold bg-accent text-ink-bright transition-colors">Results</button>
+        <button onclick="switchHistoryTab('closes')" id="ht-tab-closes"
+          class="hist-tab flex-1 py-1.5 rounded-lg text-xs font-semibold bg-surface text-ink transition-colors">Closes</button>
         <button onclick="switchHistoryTab('mine')" id="ht-tab-mine"
           class="hist-tab flex-1 py-1.5 rounded-lg text-xs font-semibold bg-surface text-ink transition-colors">My Predictions</button>
       </div>
       <div id="history-results-panel">
         <div id="history-list"></div>
+      </div>
+      <div id="history-closes-panel" class="hidden">
+        <div id="daily-closes-table"></div>
       </div>
       <div id="history-mine-panel" class="hidden">
         <div id="my-predictions-list"></div>
@@ -575,9 +580,11 @@
       if (screen === 'home') loadHome();
       else if (screen === 'guess') loadGuess();
       else if (screen === 'history') {
-        // Reset My Predictions so it reloads fresh on next open
+        // Reset My Predictions + Closes so they reload fresh on next open
         const predList = document.getElementById('my-predictions-list');
         if (predList) delete predList.dataset.loaded;
+        const closesEl = document.getElementById('daily-closes-table');
+        if (closesEl) delete closesEl.dataset.loaded;
         loadHistory();
         if (params.get('demo') === '1') {
           switchHistoryTab('mine');
@@ -988,13 +995,14 @@
 
     // ── HISTORY TABS ──────────────────────────────────────────────────
     function switchHistoryTab(tab) {
-      ['results', 'mine'].forEach(t => {
+      ['results', 'closes', 'mine'].forEach(t => {
         const btn = document.getElementById('ht-tab-' + t);
         if (!btn) return;
         btn.className = 'hist-tab flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors '
           + (t === tab ? 'bg-accent text-ink-bright' : 'bg-surface text-ink');
       });
       document.getElementById('history-results-panel')?.classList.toggle('hidden', tab !== 'results');
+      document.getElementById('history-closes-panel')?.classList.toggle('hidden', tab !== 'closes');
       document.getElementById('history-mine-panel')?.classList.toggle('hidden', tab !== 'mine');
 
       if (tab === 'mine') {
@@ -1003,6 +1011,71 @@
           predList.dataset.loaded = '1';
           loadMyPredictions(0);
         }
+      } else if (tab === 'closes') {
+        const closesEl = document.getElementById('daily-closes-table');
+        if (closesEl && !closesEl.dataset.loaded) {
+          closesEl.dataset.loaded = '1';
+          loadDailyCloses();
+        }
+      }
+    }
+
+    // ── DAILY CLOSES ──────────────────────────────────────────────────
+    // Short column-header label for a YYYY-MM-DD close date (e.g. "Jun 23").
+    function fmtCloseCol(d) {
+      const s = String(d).slice(0, 10);
+      return new Date(s + 'T00:00:00Z').toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', timeZone: 'UTC',
+      });
+    }
+
+    async function loadDailyCloses() {
+      const el = document.getElementById('daily-closes-table');
+      if (!el) return;
+      el.innerHTML = '<p class="text-faint text-sm text-center py-8">Loading closing prices...</p>';
+      try {
+        const { dates, closes } = await api('/api/daily-closes?days=7');
+        if (!dates || !dates.length) {
+          el.innerHTML = '<p class="text-faint text-sm text-center py-8">Daily closes will appear here after the first round settles.</p>';
+          return;
+        }
+
+        const headCols = dates.map(d =>
+          `<th class="px-3 py-2 text-right font-medium text-faint whitespace-nowrap">${escHtml(fmtCloseCol(d))}</th>`
+        ).join('');
+
+        const bodyRows = ASSETS.map(a => {
+          const row = (closes && closes[a]) || {};
+          const cells = dates.map(d => {
+            const v = row[d];
+            const txt = (v != null) ? fmtPrice(v) : '—';
+            const cls = (v != null) ? 'text-ink-bright' : 'text-faint';
+            return `<td class="px-3 py-2 text-right font-mono ${cls} whitespace-nowrap">${txt}</td>`;
+          }).join('');
+          return `<tr class="daily-close-row border-t border-line/40" data-asset="${a}">
+            <th scope="row" class="daily-close-asset sticky left-0 z-10 bg-surface-2/95 backdrop-blur px-3 py-2 text-left whitespace-nowrap">
+              <span class="font-bold text-sm text-ink-bright">${a}</span>
+              <span class="block text-xs text-faint">${escHtml(ASSET_NAMES[a] || a)}</span>
+            </th>
+            ${cells}
+          </tr>`;
+        }).join('');
+
+        el.innerHTML = `
+          <p class="text-xs text-faint mb-2">Daily closing price per token — newest first. Scroll sideways for older days.</p>
+          <div class="overflow-x-auto rounded-xl border border-line/50 bg-surface-2/80">
+            <table id="daily-closes" class="w-full text-sm border-collapse">
+              <thead>
+                <tr>
+                  <th class="sticky left-0 z-10 bg-surface-2/95 backdrop-blur px-3 py-2 text-left font-medium text-faint">Token</th>
+                  ${headCols}
+                </tr>
+              </thead>
+              <tbody>${bodyRows}</tbody>
+            </table>
+          </div>`;
+      } catch {
+        el.innerHTML = '<p class="text-neg text-sm text-center py-8">Failed to load closing prices.</p>';
       }
     }
 

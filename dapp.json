@@ -88,6 +88,11 @@
       "name": "Profile page renders identity card and stats",
       "path": "/?demo=1#profile",
       "expectSelector": ".profile-card"
+    },
+    {
+      "name": "History screen exposes the Closes tab",
+      "path": "/#history",
+      "expectSelector": "#ht-tab-closes"
     }
   ]
 }

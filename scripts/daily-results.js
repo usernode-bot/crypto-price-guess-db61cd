@@ -82,49 +82,76 @@ function calculatePayouts(sortedGuesses, potTotal) {
   return payouts;
 }
 
+// Ensure the daily_closes table exists (the server boot migration normally
+// creates it; this keeps the standalone cron safe to run on its own).
+async function ensureDailyClosesTable(pool) {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS daily_closes (
+      close_date DATE NOT NULL,
+      asset VARCHAR(10) NOT NULL,
+      close_price NUMERIC(20,8) NOT NULL,
+      source TEXT,
+      recorded_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE (close_date, asset)
+    )
+  `);
+}
+
 async function processAsset(pool, roundDate, asset) {
   const { rows: ex } = await pool.query(
-    'SELECT id FROM results WHERE round_date = $1 AND asset = $2', [roundDate, asset]
+    'SELECT id, close_price FROM results WHERE round_date = $1 AND asset = $2', [roundDate, asset]
   );
-  if (ex.length) {
-    console.log(`[${asset}] Already processed — skipping.`);
-    return { asset, status: 'already processed' };
-  }
 
   const { rows: guesses } = await pool.query(
     `SELECT user_id, username, price_guess::float FROM guesses WHERE round_date = $1 AND asset = $2`,
     [roundDate, asset]
   );
-  if (!guesses.length) {
-    console.log(`[${asset}] No guesses — skipping.`);
-    return { asset, status: 'no guesses' };
-  }
 
-  const cgId = COINGECKO_IDS[asset];
-  const [y, m, d] = roundDate.split('-');
-  const cgDate = `${d}-${m}-${y}`;
-
-  let closePrice;
-  try {
-    const apiKey = process.env.COINGECKO_API_KEY;
-    let url = `https://api.coingecko.com/api/v3/coins/${cgId}/history?date=${cgDate}&localization=false`;
-    if (apiKey) url += `&x_cg_demo_api_key=${encodeURIComponent(apiKey)}`;
-    console.log(`[${asset}] Fetching CoinGecko history for ${cgDate}…`);
-    const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      throw new Error(`HTTP ${res.status}: ${body.slice(0, 120)}`);
+  // Resolve the daily close for EVERY asset (not just guessed ones), reusing an
+  // already-stored results close when present to avoid a redundant API call.
+  let closePrice = ex.length ? parseFloat(ex[0].close_price) : null;
+  if (closePrice == null) {
+    const cgId = COINGECKO_IDS[asset];
+    const [y, m, d] = roundDate.split('-');
+    const cgDate = `${d}-${m}-${y}`;
+    try {
+      const apiKey = process.env.COINGECKO_API_KEY;
+      let url = `https://api.coingecko.com/api/v3/coins/${cgId}/history?date=${cgDate}&localization=false`;
+      if (apiKey) url += `&x_cg_demo_api_key=${encodeURIComponent(apiKey)}`;
+      console.log(`[${asset}] Fetching CoinGecko history for ${cgDate}…`);
+      const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        throw new Error(`HTTP ${res.status}: ${body.slice(0, 120)}`);
+      }
+      const data = await res.json();
+      closePrice = data?.market_data?.current_price?.usd ?? null;
+    } catch (e) {
+      console.error(`[${asset}] CoinGecko error: ${e.message}`);
+      return { asset, status: `error: ${e.message}` };
     }
-    const data = await res.json();
-    closePrice = data?.market_data?.current_price?.usd;
-  } catch (e) {
-    console.error(`[${asset}] CoinGecko error: ${e.message}`);
-    return { asset, status: `error: ${e.message}` };
   }
 
-  if (!closePrice) {
+  if (closePrice == null) {
     console.warn(`[${asset}] No price data returned for ${roundDate}.`);
     return { asset, status: 'no price data' };
+  }
+
+  // Comprehensive per-token daily close (all assets, every day).
+  await pool.query(
+    `INSERT INTO daily_closes (close_date, asset, close_price, source) VALUES ($1, $2, $3, $4)
+     ON CONFLICT (close_date, asset) DO NOTHING`,
+    [roundDate, asset, closePrice, 'settlement']
+  );
+
+  // Results + payouts are gated on participation, exactly as before.
+  if (ex.length) {
+    console.log(`[${asset}] Already processed — recorded daily close only.`);
+    return { asset, status: 'already processed', close_price: closePrice };
+  }
+  if (!guesses.length) {
+    console.log(`[${asset}] No guesses — recorded daily close only.`);
+    return { asset, status: 'no guesses', close_price: closePrice };
   }
 
   console.log(`[${asset}] Close price: $${closePrice}  |  ${guesses.length} guess(es)`);
@@ -170,6 +197,8 @@ async function main() {
 
   console.log(`Processing round: ${roundDate}`);
   console.log(`Assets: ${assetsToProcess.join(', ')}\n`);
+
+  await ensureDailyClosesTable(pool);
 
   const summary = [];
   for (const asset of assetsToProcess) {
