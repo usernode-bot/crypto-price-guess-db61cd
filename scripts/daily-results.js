@@ -8,6 +8,7 @@
 'use strict';
 
 const { Pool } = require('pg');
+const { calculatePayouts, fetchClosePrice, closeDateForRound } = require('../lib/settlement');
 
 const ASSETS = ['BTC', 'ETH', 'SOL', 'BNB', 'TRX', 'HYPE', 'SUI', 'AVAX', 'DOGE', 'ADA', 'DOT', 'MATIC'];
 const COINGECKO_IDS = {
@@ -41,47 +42,6 @@ function parseArgs() {
   return result;
 }
 
-function calculatePayouts(sortedGuesses, potTotal) {
-  const n = sortedGuesses.length;
-  if (n === 0) return [];
-  if (n === 1) {
-    return [{
-      ...sortedGuesses[0],
-      place: 1,
-      prize_tokens: Math.floor(potTotal * 0.95 * 10000) / 10000,
-    }];
-  }
-
-  const PRIZES = [0.70, 0.20, 0.05];
-  const payouts = [];
-  const groups = [];
-  let cur = [sortedGuesses[0]];
-  for (let i = 1; i < n; i++) {
-    if (Math.abs(sortedGuesses[i].distance - cur[0].distance) < 0.000001) {
-      cur.push(sortedGuesses[i]);
-    } else {
-      groups.push(cur);
-      cur = [sortedGuesses[i]];
-    }
-  }
-  groups.push(cur);
-
-  let placeStart = 0;
-  for (const group of groups) {
-    if (placeStart >= 3) break;
-    const maxTier = Math.min(3, n);
-    const tiersEnd = Math.min(placeStart + group.length, maxTier);
-    let totalPct = 0;
-    for (let t = placeStart; t < tiersEnd; t++) totalPct += PRIZES[t];
-    const prizeEach = Math.floor(potTotal * totalPct / group.length * 10000) / 10000;
-    for (const g of group) {
-      if (placeStart < 3) payouts.push({ ...g, place: placeStart + 1, prize_tokens: prizeEach });
-    }
-    placeStart += group.length;
-  }
-  return payouts;
-}
-
 async function processAsset(pool, roundDate, asset) {
   const { rows: ex } = await pool.query(
     'SELECT id FROM results WHERE round_date = $1 AND asset = $2', [roundDate, asset]
@@ -101,22 +61,11 @@ async function processAsset(pool, roundDate, asset) {
   }
 
   const cgId = COINGECKO_IDS[asset];
-  const [y, m, d] = roundDate.split('-');
-  const cgDate = `${d}-${m}-${y}`;
-
   let closePrice;
   try {
-    const apiKey = process.env.COINGECKO_API_KEY;
-    let url = `https://api.coingecko.com/api/v3/coins/${cgId}/history?date=${cgDate}&localization=false`;
-    if (apiKey) url += `&x_cg_demo_api_key=${encodeURIComponent(apiKey)}`;
-    console.log(`[${asset}] Fetching CoinGecko history for ${cgDate}…`);
-    const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      throw new Error(`HTTP ${res.status}: ${body.slice(0, 120)}`);
-    }
-    const data = await res.json();
-    closePrice = data?.market_data?.current_price?.usd;
+    const cgDate = closeDateForRound(roundDate);
+    console.log(`[${asset}] Fetching CoinGecko close price for round ${roundDate} (snapshot ${cgDate})…`);
+    closePrice = await fetchClosePrice(cgId, roundDate, { log: (msg) => console.warn(`[${asset}] ${msg}`) });
   } catch (e) {
     console.error(`[${asset}] CoinGecko error: ${e.message}`);
     return { asset, status: `error: ${e.message}` };
