@@ -3,6 +3,7 @@ const path = require('path');
 const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
 const { verifyGuessTransaction } = require('./lib/tx-match');
+const { calculatePayouts, fetchClosePrice } = require('./lib/settlement');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -670,57 +671,19 @@ app.post('/api/admin/daily-results', async (req, res) => {
       yesterday.setUTCDate(yesterday.getUTCDate() - 1);
       targetDate = yesterday.toISOString().slice(0, 10);
     }
+    // Opt-in recompute: ?force=1 clears any existing settlement for the date so
+    // it is rebuilt against the corrected closing price. Default skips settled rows.
+    const force = req.query.force === '1';
+    if (force) {
+      await pool.query('DELETE FROM payouts WHERE round_date = $1', [targetDate]);
+      await pool.query('DELETE FROM results WHERE round_date = $1', [targetDate]);
+    }
     const results = await processDailyResults(pool, targetDate);
-    res.json({ ok: true, processed: results });
+    res.json({ ok: true, forced: force, processed: results });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
-
-function calculatePayouts(sortedGuesses, potTotal) {
-  const n = sortedGuesses.length;
-  if (n === 0) return [];
-
-  // Single guesser gets 95% (all prize tiers combined)
-  if (n === 1) {
-    return [{
-      ...sortedGuesses[0],
-      place: 1,
-      prize_tokens: Math.floor(potTotal * 0.95 * 10000) / 10000,
-    }];
-  }
-
-  const PRIZES = [0.70, 0.20, 0.05];
-  const payouts = [];
-
-  // Group by equal distance (ties)
-  const groups = [];
-  let cur = [sortedGuesses[0]];
-  for (let i = 1; i < n; i++) {
-    if (Math.abs(sortedGuesses[i].distance - cur[0].distance) < 0.000001) {
-      cur.push(sortedGuesses[i]);
-    } else {
-      groups.push(cur);
-      cur = [sortedGuesses[i]];
-    }
-  }
-  groups.push(cur);
-
-  let placeStart = 0; // 0-indexed
-  for (const group of groups) {
-    if (placeStart >= 3) break;
-    const maxTier = Math.min(3, n);
-    const tiersEnd = Math.min(placeStart + group.length, maxTier);
-    let totalPct = 0;
-    for (let t = placeStart; t < tiersEnd; t++) totalPct += PRIZES[t];
-    const prizeEach = Math.floor(potTotal * totalPct / group.length * 10000) / 10000;
-    for (const g of group) {
-      if (placeStart < 3) payouts.push({ ...g, place: placeStart + 1, prize_tokens: prizeEach });
-    }
-    placeStart += group.length;
-  }
-  return payouts;
-}
 
 async function processDailyResults(dbPool, roundDate) {
   const processed = [];
@@ -737,17 +700,11 @@ async function processDailyResults(dbPool, roundDate) {
     if (!guesses.length) { processed.push({ asset, status: 'no guesses' }); continue; }
 
     const cgId = COINGECKO_IDS[asset];
-    const [y, m, d] = roundDate.split('-');
-    const cgDate = `${d}-${m}-${y}`;
+    // Settle against the round's CLOSING price — the 00:00-UTC snapshot of the
+    // day AFTER round_date — via the shared helper (see lib/settlement.js).
     let closePrice;
     try {
-      const apiKey = process.env.COINGECKO_API_KEY;
-      let url = `https://api.coingecko.com/api/v3/coins/${cgId}/history?date=${cgDate}&localization=false`;
-      if (apiKey) url += `&x_cg_demo_api_key=${encodeURIComponent(apiKey)}`;
-      const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const data = await r.json();
-      closePrice = data?.market_data?.current_price?.usd;
+      closePrice = await fetchClosePrice(cgId, roundDate, { log: (msg) => console.warn(`[${asset}] ${msg}`) });
     } catch (e) {
       console.error(`CoinGecko error for ${asset}:`, e.message);
       processed.push({ asset, status: `error: ${e.message}` });
