@@ -64,6 +64,16 @@
       "expectSelector": ".guess-chart"
     },
     {
+      "name": "Guess screen renders the stake selector",
+      "path": "/#guess",
+      "expectSelector": ".stake-chip"
+    },
+    {
+      "name": "Profile renders the wallet card",
+      "path": "/?demo=1#profile",
+      "expectSelector": ".wallet-card"
+    },
+    {
       "name": "History screen renders round list",
       "path": "/#history",
       "expectSelector": ".history-round"

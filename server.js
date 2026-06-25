@@ -20,6 +20,13 @@ const CHAIN_ID = process.env.CHAIN_ID || 'usernode';
 // still has a destination for its mock transaction when APP_PUBKEY is unset.
 const STAGING_APP_PUBKEY = 'ut1stagingappwallet000000000000000000';
 
+// Variable stake bounds (whole tokens). A guess stakes between MIN_STAKE and
+// MAX_STAKE tokens from the player's wallet; the per-asset pot is the sum of
+// stakes and the closest guesses split it. Surfaced via /api/config so the
+// frontend chips/validation match the server without duplicating the numbers.
+const MIN_STAKE = 1;
+const MAX_STAKE = 1000;
+
 const ASSETS = ['BTC', 'ETH', 'SOL', 'BNB', 'TRX', 'HYPE', 'SUI', 'AVAX', 'DOGE', 'ADA', 'DOT', 'MATIC'];
 const COINGECKO_IDS = {
   BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', BNB: 'binancecoin',
@@ -80,6 +87,8 @@ app.get('/api/config', (_req, res) => {
     staging: IS_STAGING,
     is_staging: IS_STAGING,
     explorer_base: process.env.EXPLORER_TX_URL_BASE || null,
+    min_stake: MIN_STAKE,
+    max_stake: MAX_STAKE,
   });
 });
 
@@ -210,20 +219,21 @@ app.get('/api/round/current', async (req, res) => {
   try {
     const roundDate = getCurrentRoundDate();
     const { rows: potRows } = await pool.query(
-      `SELECT asset, COUNT(*) AS guess_count FROM guesses WHERE round_date = $1 GROUP BY asset`,
+      `SELECT asset, COUNT(*) AS guess_count, COALESCE(SUM(stake_tokens), 0) AS pot_tokens
+       FROM guesses WHERE round_date = $1 GROUP BY asset`,
       [roundDate]
     );
     const pots = {};
     for (const a of ASSETS) pots[a] = { guess_count: 0, pot_tokens: 0 };
     for (const r of potRows) {
-      pots[r.asset] = { guess_count: parseInt(r.guess_count), pot_tokens: parseInt(r.guess_count) };
+      pots[r.asset] = { guess_count: parseInt(r.guess_count), pot_tokens: parseFloat(r.pot_tokens) };
     }
     // req.user is absent on the staging-public path (proposal tests); the pot
     // totals above don't need it, and my_guesses is simply empty then.
     let myGuesses = [];
     if (req.user) {
       ({ rows: myGuesses } = await pool.query(
-        `SELECT asset, price_guess, message, tx_hash, submitted_at FROM guesses WHERE round_date = $1 AND user_id = $2`,
+        `SELECT asset, price_guess, stake_tokens, message, tx_hash, submitted_at FROM guesses WHERE round_date = $1 AND user_id = $2`,
         [roundDate, req.user.id]
       ));
     }
@@ -235,17 +245,24 @@ app.get('/api/round/current', async (req, res) => {
 
 app.post('/api/guess', async (req, res) => {
   try {
-    const { asset, price_guess, message, tx_hash } = req.body;
+    const { asset, price_guess, message, tx_hash, stake } = req.body;
     if (!ASSETS.includes(asset)) return res.status(400).json({ error: 'Invalid asset' });
     const pg = parseFloat(price_guess);
     if (isNaN(pg) || pg <= 0) return res.status(400).json({ error: 'Invalid price' });
+
+    // Stake is a whole number of tokens within [MIN_STAKE, MAX_STAKE]. The
+    // on-chain payment amount must equal this, and the pot is the sum of stakes.
+    const stakeNum = Number(stake);
+    if (!Number.isInteger(stakeNum) || stakeNum < MIN_STAKE || stakeNum > MAX_STAKE) {
+      return res.status(400).json({ error: `Stake must be a whole number between ${MIN_STAKE} and ${MAX_STAKE} tokens` });
+    }
 
     const now = new Date();
     const secs = now.getUTCHours() * 3600 + now.getUTCMinutes() * 60 + now.getUTCSeconds();
     if (secs >= 86390) return res.status(400).json({ error: 'Round is closing — try again tomorrow' });
 
-    // A guess is an on-chain 1-token payment from the player's wallet to the
-    // app wallet; it is only recorded once that transaction is verified.
+    // A guess is an on-chain payment of `stake` tokens from the player's wallet
+    // to the app wallet; it is only recorded once that transaction is verified.
     if (!req.user.usernode_pubkey) {
       return res.status(400).json({ error: 'Link your Usernode wallet to play' });
     }
@@ -265,6 +282,11 @@ app.post('/api/guess', async (req, res) => {
     if (existing.length && existing[0].tx_hash && existing[0].tx_hash === txHash) {
       return res.json({ ok: true, guess: existing[0] });
     }
+    // Lock: one stake per asset per round. A different (new) payment for an asset
+    // already staked is rejected so a stake is never silently doubled.
+    if (existing.length && existing[0].tx_hash && existing[0].tx_hash !== txHash) {
+      return res.status(400).json({ error: "You've already staked on this asset today" });
+    }
 
     // Replay protection: a transaction may back at most one guess row.
     const { rows: dup } = await pool.query(
@@ -277,9 +299,9 @@ app.post('/api/guess', async (req, res) => {
       return res.status(400).json({ error: 'This transaction has already been used for a guess' });
     }
 
-    // Memo binds the on-chain payment to this exact guess. Built server-side
-    // from validated inputs — a client-supplied memo is never trusted.
-    const expectedMemo = `cpg|v1|${roundDate}|${asset}|${priceStr}`;
+    // Memo binds the on-chain payment to this exact guess, including the stake.
+    // Built server-side from validated inputs — a client memo is never trusted.
+    const expectedMemo = `cpg|v1|${roundDate}|${asset}|${priceStr}|${stakeNum}`;
 
     // Staging has no real chain (APP_PRIVKEY is a dummy), so the on-chain
     // verification is skipped and the mock tx_hash is accepted as-is.
@@ -289,7 +311,7 @@ app.post('/api/guess', async (req, res) => {
         chainId: CHAIN_ID,
         expectedTo: APP_PUBKEY,
         expectedFrom: req.user.usernode_pubkey,
-        expectedAmount: 1,
+        expectedAmount: stakeNum,
         expectedMemo,
       });
       if (!verdict.ok) {
@@ -297,18 +319,27 @@ app.post('/api/guess', async (req, res) => {
       }
     }
 
+    // Insert-or-reject: the lock check above already rejected a re-stake, so the
+    // only ON CONFLICT path here is a row that exists with no tx_hash yet (rare
+    // legacy state) — fill it in once.
     const { rows } = await pool.query(`
-      INSERT INTO guesses (user_id, username, round_date, asset, price_guess, message, tx_hash, tx_from, tx_confirmed_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+      INSERT INTO guesses (user_id, username, round_date, asset, price_guess, stake_tokens, message, tx_hash, tx_from, tx_confirmed_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
       ON CONFLICT (user_id, round_date, asset) DO UPDATE
         SET price_guess = EXCLUDED.price_guess,
+            stake_tokens = EXCLUDED.stake_tokens,
             message = EXCLUDED.message,
             tx_hash = EXCLUDED.tx_hash,
             tx_from = EXCLUDED.tx_from,
             tx_confirmed_at = NOW(),
             submitted_at = NOW()
+      WHERE guesses.tx_hash IS NULL
       RETURNING *
-    `, [req.user.id, req.user.username, roundDate, asset, priceStr, message?.slice(0, 140) || null, txHash, req.user.usernode_pubkey]);
+    `, [req.user.id, req.user.username, roundDate, asset, priceStr, stakeNum, message?.slice(0, 140) || null, txHash, req.user.usernode_pubkey]);
+    if (!rows.length) {
+      // Conflict fell through the WHERE guard — an existing confirmed stake.
+      return res.status(400).json({ error: "You've already staked on this asset today" });
+    }
     res.json({ ok: true, guess: rows[0] });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -386,8 +417,14 @@ app.get('/api/round/:date/results', async (req, res) => {
     );
     if (!results.length) return res.status(404).json({ error: 'No results yet for this date' });
 
+    // LEFT JOIN the winner's guess to surface how much they staked alongside
+    // their prize. (Winnings remain ledger-only; this is display data.)
     const { rows: payouts } = await pool.query(
-      `SELECT * FROM payouts WHERE round_date = $1 ORDER BY asset, place`, [roundDate]
+      `SELECT p.*, g.stake_tokens
+       FROM payouts p
+       LEFT JOIN guesses g
+         ON g.round_date = p.round_date AND g.asset = p.asset AND g.user_id = p.user_id
+       WHERE p.round_date = $1 ORDER BY p.asset, p.place`, [roundDate]
     );
     const byAsset = {};
     for (const p of payouts) {
@@ -547,7 +584,7 @@ app.get('/api/user/predictions', async (req, res) => {
 
     const { rows: predictions } = await pool.query(`
       SELECT
-        g.round_date, g.asset, g.price_guess, g.message, g.tx_hash, g.submitted_at,
+        g.round_date, g.asset, g.price_guess, g.stake_tokens, g.message, g.tx_hash, g.submitted_at,
         r.close_price, r.pot_total,
         p.place, p.prize_tokens
       FROM guesses g
@@ -580,10 +617,17 @@ app.get('/api/profile', async (req, res) => {
       username = req.user.username;
     } else {
       return res.json({
-        username: null, display_name: null, bio: null,
+        username: null, display_name: null, bio: null, wallet_pubkey: null,
         stats: { total_guesses: 0, rounds_played: 0, wins: 0, total_won: 0, accuracy_pct: null },
       });
     }
+
+    // Server-authoritative wallet address for the Profile wallet card. In the
+    // ?demo=1 staging path there is no real bridge/token, so synthesize the same
+    // obviously-fake address seedStaging uses as staging-alice's tx_from.
+    const walletPubkey = isDemo
+      ? 'ut1-staging-alice'
+      : (req.user && req.user.usernode_pubkey) || null;
 
     const { rows: profRows } = await pool.query(
       `SELECT display_name, bio, username FROM profiles WHERE user_id = $1`, [userId]
@@ -611,6 +655,7 @@ app.get('/api/profile', async (req, res) => {
       username: prof.username || username,
       display_name: prof.display_name || null,
       bio: prof.bio || null,
+      wallet_pubkey: walletPubkey,
       stats: {
         total_guesses: parseInt(s.total_guesses || 0),
         rounds_played: parseInt(s.rounds_played || 0),
@@ -694,10 +739,14 @@ async function processDailyResults(dbPool, roundDate) {
     if (ex.length) { processed.push({ asset, status: 'already processed' }); continue; }
 
     const { rows: guesses } = await dbPool.query(
-      `SELECT user_id, username, price_guess::float FROM guesses WHERE round_date = $1 AND asset = $2`,
+      `SELECT user_id, username, price_guess::float, stake_tokens::float FROM guesses WHERE round_date = $1 AND asset = $2`,
       [roundDate, asset]
     );
     if (!guesses.length) { processed.push({ asset, status: 'no guesses' }); continue; }
+
+    // The pot is the sum of real staked tokens (not a head-count). The closest
+    // guesses split it via calculatePayouts, which already takes an arbitrary pot.
+    const potTotal = guesses.reduce((sum, g) => sum + (g.stake_tokens || 0), 0);
 
     const cgId = COINGECKO_IDS[asset];
     // Settle against the round's CLOSING price — the 00:00-UTC snapshot of the
@@ -719,12 +768,12 @@ async function processDailyResults(dbPool, roundDate) {
 
     const withDist = guesses.map(g => ({ ...g, distance: Math.abs(g.price_guess - closePrice) }));
     withDist.sort((a, b) => a.distance - b.distance);
-    const payoutRows = calculatePayouts(withDist, guesses.length);
+    const payoutRows = calculatePayouts(withDist, potTotal);
 
     await dbPool.query(
       `INSERT INTO results (round_date, asset, close_price, pot_total) VALUES ($1, $2, $3, $4)
        ON CONFLICT (round_date, asset) DO NOTHING`,
-      [roundDate, asset, closePrice, guesses.length]
+      [roundDate, asset, closePrice, potTotal]
     );
     for (const p of payoutRows) {
       await dbPool.query(
@@ -735,7 +784,7 @@ async function processDailyResults(dbPool, roundDate) {
       );
     }
     await new Promise(r => setTimeout(r, 500));
-    processed.push({ asset, status: 'ok', close_price: closePrice, pot: guesses.length });
+    processed.push({ asset, status: 'ok', close_price: closePrice, pot: potTotal });
   }
   return processed;
 }
@@ -783,6 +832,11 @@ async function seedStaging() {
     { id: 900005, username: 'staging-eve' },
   ];
 
+  // Varied stakes per user index so pots, the leaderboard's "total won," and the
+  // new staked-amount UI render with visible spread rather than all-1s.
+  const STAKE_CYCLE = [1, 5, 10, 25];
+  const stakeForUser = (idx) => STAKE_CYCLE[idx % STAKE_CYCLE.length];
+
   const today = new Date();
 
   // Seed a profile for staging-alice (900001) — the demo user the read-only
@@ -804,7 +858,8 @@ async function seedStaging() {
     for (let ai = 0; ai < ASSETS.length; ai++) {
       const asset = ASSETS[ai];
       const closePrice = fakePrices[asset][priceIdx];
-      const potTotal = 5;
+      // Pot is the real sum of the 5 users' varied stakes (1+5+10+25+1 = 42).
+      const potTotal = fakeUsers.reduce((sum, _u, idx) => sum + stakeForUser(idx), 0);
 
       await pool.query(
         `INSERT INTO results (round_date, asset, close_price, pot_total) VALUES ($1, $2, $3, $4)
@@ -828,6 +883,7 @@ async function seedStaging() {
         const dir = (priceIdx + uIdx) % 2 === 0 ? 1 : -1;
         const mult = 1 + dir * USER_ERR[uIdx];
         const guessPrice = parseFloat((closePrice * mult).toFixed(2));
+        const stake = stakeForUser(uIdx);
         const submittedAt = roundDate + 'T12:00:00.000Z';
         // Give the demo user (900001 — the ?demo=1 My Predictions view) an
         // obviously-fake on-chain receipt on every other asset, so both the
@@ -836,10 +892,10 @@ async function seedStaging() {
           ? `staging-demo-tx-${roundDate}-${asset}`
           : null;
         await pool.query(
-          `INSERT INTO guesses (user_id, username, round_date, asset, price_guess, submitted_at, tx_hash, tx_from, tx_confirmed_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          `INSERT INTO guesses (user_id, username, round_date, asset, price_guess, stake_tokens, submitted_at, tx_hash, tx_from, tx_confirmed_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
            ON CONFLICT (user_id, round_date, asset) DO NOTHING`,
-          [w.id, w.username, roundDate, asset, guessPrice, submittedAt, txHash, txHash ? `ut1-${w.username}` : null, txHash ? submittedAt : null]
+          [w.id, w.username, roundDate, asset, guessPrice, stake, submittedAt, txHash, txHash ? `ut1-${w.username}` : null, txHash ? submittedAt : null]
         );
         if (pi < 3) {
           await pool.query(
@@ -862,23 +918,25 @@ async function seedStaging() {
     for (let ui = 0; ui < fakeUsers.length; ui++) {
       const user = fakeUsers[ui];
       const guessPrice = parseFloat((basePrice * (1 + ui * 0.01 - 0.02)).toFixed(2));
+      const stake = stakeForUser(ui);
       const submittedAt = new Date(today.getTime() - (2 + ui * 1.5) * 3600000).toISOString();
       const txHash = (user.id === 900001 && ai % 2 === 0)
         ? `staging-demo-tx-${todayDate}-${asset}`
         : null;
       await pool.query(
-        `INSERT INTO guesses (user_id, username, round_date, asset, price_guess, message, submitted_at, tx_hash, tx_from, tx_confirmed_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        `INSERT INTO guesses (user_id, username, round_date, asset, price_guess, stake_tokens, message, submitted_at, tx_hash, tx_from, tx_confirmed_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          ON CONFLICT (user_id, round_date, asset) DO NOTHING`,
-        [user.id, user.username, todayDate, asset, guessPrice, messages[ui], submittedAt, txHash, txHash ? `ut1-${user.username}` : null, txHash ? submittedAt : null]
+        [user.id, user.username, todayDate, asset, guessPrice, stake, messages[ui], submittedAt, txHash, txHash ? `ut1-${user.username}` : null, txHash ? submittedAt : null]
       );
     }
   }
 
-  // Push today's combined pot over the 100-token reward-boost milestone so the
-  // home-screen badge (and its dapp test) is exercisable in staging. The 5
-  // fakeUsers above contribute 5 × 8 = 40 tokens; these 8 extra obviously-fake
-  // demo users add 8 × 8 = 64, for ~104 tokens total — just over the milestone.
+  // Reinforce today's combined pot well past the 100-token reward-boost
+  // milestone so the home-screen badge (and its dapp test) is exercisable in
+  // staging. With varied stakes the 5 fakeUsers already contribute 42 tokens
+  // PER asset across 12 assets; these 8 extra obviously-fake demo users add
+  // more, keeping the combined pot comfortably over the milestone.
   const boostUsers = [];
   for (let i = 1; i <= 8; i++) {
     boostUsers.push({ id: 900100 + i, username: `staging-demo-${String(i).padStart(2, '0')}` });
@@ -889,12 +947,13 @@ async function seedStaging() {
     for (let ui = 0; ui < boostUsers.length; ui++) {
       const user = boostUsers[ui];
       const guessPrice = parseFloat((basePrice * (1 + ui * 0.008 - 0.03)).toFixed(2));
+      const stake = stakeForUser(ui);
       const submittedAt = new Date(today.getTime() - (1 + ui * 0.75) * 3600000).toISOString();
       await pool.query(
-        `INSERT INTO guesses (user_id, username, round_date, asset, price_guess, message, submitted_at, tx_hash, tx_from, tx_confirmed_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $7)
+        `INSERT INTO guesses (user_id, username, round_date, asset, price_guess, stake_tokens, message, submitted_at, tx_hash, tx_from, tx_confirmed_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $8)
          ON CONFLICT (user_id, round_date, asset) DO NOTHING`,
-        [user.id, user.username, todayDate, asset, guessPrice, 'Staging demo — boosting the pot', submittedAt, `staging-tx-${todayDate}-${asset}-${user.id}`, `ut1-${user.username}`]
+        [user.id, user.username, todayDate, asset, guessPrice, stake, 'Staging demo — boosting the pot', submittedAt, `staging-tx-${todayDate}-${asset}-${user.id}`, `ut1-${user.username}`]
       );
     }
   }
@@ -933,6 +992,9 @@ async function start() {
     await pool.query(`ALTER TABLE guesses ADD COLUMN IF NOT EXISTS tx_hash TEXT`);
     await pool.query(`ALTER TABLE guesses ADD COLUMN IF NOT EXISTS tx_from TEXT`);
     await pool.query(`ALTER TABLE guesses ADD COLUMN IF NOT EXISTS tx_confirmed_at TIMESTAMPTZ`);
+    // Variable stake amount per guess. Default 1 keeps existing rows equal to
+    // their old implicit 1-token cost, so historical pots stay correct.
+    await pool.query(`ALTER TABLE guesses ADD COLUMN IF NOT EXISTS stake_tokens NUMERIC(20,8) NOT NULL DEFAULT 1`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS guesses_tx_hash_uq ON guesses (tx_hash) WHERE tx_hash IS NOT NULL`);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS results (
@@ -967,6 +1029,29 @@ async function start() {
         created_at TIMESTAMPTZ DEFAULT NOW(),
         UNIQUE (round_date, asset, user_id)
       )
+    `);
+
+    // Widen pot/prize columns to hold real summed-stake pots (was a head-count).
+    // Guard each ALTER TYPE behind an information_schema check so it runs ONCE,
+    // not as a per-boot ACCESS EXCLUSIVE table rewrite. int→numeric is lossless
+    // (old counts equal old token totals, since each old guess was 1 token).
+    await pool.query(`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'results' AND column_name = 'pot_total' AND data_type = 'integer'
+        ) THEN
+          ALTER TABLE results ALTER COLUMN pot_total TYPE NUMERIC(20,8);
+        END IF;
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'payouts' AND column_name = 'prize_tokens'
+            AND (numeric_precision IS DISTINCT FROM 20 OR numeric_scale IS DISTINCT FROM 8)
+        ) THEN
+          ALTER TABLE payouts ALTER COLUMN prize_tokens TYPE NUMERIC(20,8);
+        END IF;
+      END $$;
     `);
   } catch (err) {
     console.error('Schema init error:', err.message);
