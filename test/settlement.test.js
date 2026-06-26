@@ -53,3 +53,49 @@ test('calculatePayouts: three distinct guessers split 70/20/5 of the pot', () =>
   assert.equal(payouts[1].prize_tokens, 2);
   assert.equal(payouts[2].prize_tokens, 0.5);
 });
+
+// ── Variable-stake pots ──────────────────────────────────────────────
+// The pot is now the real SUM of stakes, not a head-count. calculatePayouts
+// already takes an arbitrary pot, so the same ranking splits the staked pool.
+
+test('calculatePayouts: single guesser takes 95% of a staked pot of 25', () => {
+  // One player staked 25 tokens; with no one else the pot is just their stake.
+  const payouts = calculatePayouts([{ user_id: 1, distance: 3 }], 25);
+  assert.equal(payouts.length, 1);
+  assert.equal(payouts[0].place, 1);
+  assert.equal(payouts[0].prize_tokens, 23.75); // floor(25 * 0.95)
+});
+
+test('calculatePayouts: three guessers split a summed-stake pot (1+5+10+25=41)', () => {
+  const pot = 1 + 5 + 10 + 25; // 41 tokens of real stakes
+  const payouts = calculatePayouts([
+    { user_id: 1, distance: 1 },
+    { user_id: 2, distance: 2 },
+    { user_id: 3, distance: 3 },
+    { user_id: 4, distance: 9 },
+  ], pot);
+  assert.deepEqual(payouts.map(p => p.place), [1, 2, 3]);
+  // 70/20/5 of 41, floored to 4 decimals.
+  assert.equal(payouts[0].prize_tokens, 28.7);
+  assert.equal(payouts[1].prize_tokens, 8.2);
+  assert.equal(payouts[2].prize_tokens, 2.05);
+});
+
+test('calculatePayouts: ties share combined tiers of a summed-stake pot', () => {
+  // Two-way tie for closest on a pot of 20 (e.g. 10+5+5 staked); the tied
+  // pair share tiers 1+2 (90%); the third takes tier 3 (5%).
+  const payouts = calculatePayouts([
+    { user_id: 1, distance: 2 },
+    { user_id: 2, distance: 2 },
+    { user_id: 3, distance: 5 },
+  ], 20);
+  assert.equal(payouts.length, 3);
+  assert.equal(payouts[0].place, 1);
+  assert.equal(payouts[1].place, 1);
+  // each tied winner: floor(20 * 0.90 / 2) = 9
+  assert.equal(payouts[0].prize_tokens, 9);
+  assert.equal(payouts[1].prize_tokens, 9);
+  // third place: floor(20 * 0.05) = 1
+  assert.equal(payouts[2].place, 3);
+  assert.equal(payouts[2].prize_tokens, 1);
+});

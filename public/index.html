@@ -213,6 +213,27 @@
         <p class="text-xs text-faint text-center py-3">Tap an asset to preview its last hour</p>
       </div>
 
+      <!-- Stake selector. Always present (outside the asset-gated form) so the
+           .stake-chip selector is testable before an asset is tapped. The
+           per-asset pot is the sum of everyone's stakes; closest guess wins it. -->
+      <div id="stake-control" class="mb-3 bg-surface-2/50 rounded-xl p-3 border border-line/50">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs text-muted font-semibold">Your stake</span>
+          <span class="text-xs text-faint">closest guess wins the pool</span>
+        </div>
+        <div id="stake-chips" class="flex flex-wrap gap-2 items-center">
+          <button type="button" class="stake-chip px-3 py-1.5 rounded-lg text-sm font-semibold bg-surface border border-line text-ink transition-colors" data-stake="1" onclick="selectStake(1)">1</button>
+          <button type="button" class="stake-chip px-3 py-1.5 rounded-lg text-sm font-semibold bg-surface border border-line text-ink transition-colors" data-stake="5" onclick="selectStake(5)">5</button>
+          <button type="button" class="stake-chip px-3 py-1.5 rounded-lg text-sm font-semibold bg-surface border border-line text-ink transition-colors" data-stake="10" onclick="selectStake(10)">10</button>
+          <button type="button" class="stake-chip px-3 py-1.5 rounded-lg text-sm font-semibold bg-surface border border-line text-ink transition-colors" data-stake="25" onclick="selectStake(25)">25</button>
+          <input id="stake-input" type="number" min="1" max="1000" step="1" inputmode="numeric"
+            class="stake-input w-24 bg-surface-2 border border-line rounded-lg px-3 py-1.5 text-sm font-mono text-ink-bright focus:outline-none focus:border-accent transition-colors"
+            placeholder="Custom" oninput="onStakeInput()">
+          <span class="text-xs text-faint">tokens</span>
+        </div>
+        <div id="stake-hint" class="text-xs text-faint mt-1.5">Staking 1 token</div>
+      </div>
+
       <!-- Guess form (shown after asset selected) -->
       <div id="no-asset-msg" class="text-center text-faint text-sm py-6 bg-surface-2/50 rounded-xl">
         Tap an asset above to start your prediction
@@ -223,13 +244,13 @@
              Rendered by renderWalletStatus(); populated by connectWallet(). -->
         <div id="wallet-status" class="wallet-status mb-3"></div>
         <div id="wallet-notice" class="wallet-notice hidden text-xs text-warn text-center mb-3 p-2 bg-amber-400/10 rounded-lg border border-amber-400/20">
-          Link your Usernode wallet to play — each guess sends a 1-token transaction.
+          Link your Usernode wallet to play — each guess stakes tokens from your wallet.
         </div>
         <div id="closing-warning" class="hidden text-xs text-neg text-center mb-3 p-2 bg-red-400/10 rounded-lg border border-red-400/20">
           Round closing soon — new guesses may not be accepted.
         </div>
         <div id="existing-guess-note" class="hidden text-xs text-warn text-center mb-3 p-2 bg-amber-400/10 rounded-lg border border-amber-400/20">
-          Submitting again sends another 1-token transaction and replaces your previous guess.
+          You've already staked on this asset for today's round — your guess is locked.
         </div>
         <div class="mb-3">
           <label class="block text-xs text-muted mb-1">Your predicted closing price (USD) for <span id="selected-asset-label" class="text-accent-ink font-semibold"></span></label>
@@ -246,7 +267,7 @@
         </div>
         <button id="submit-btn" onclick="submitGuess()" disabled
           class="w-full bg-accent hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed text-ink-bright font-bold py-3 rounded-xl text-base transition-colors">
-          Predict
+          Stake 1 Token
         </button>
       </div>
 
@@ -313,6 +334,11 @@
         </div>
       </div>
 
+      <!-- Wallet card — connected address or unlinked guidance + re-check -->
+      <div id="profile-wallet" class="wallet-card bg-zinc-800/80 rounded-xl p-4 border border-zinc-700/50 mb-4">
+        <p class="text-zinc-500 text-sm text-center py-2">Checking wallet…</p>
+      </div>
+
       <!-- Stats grid -->
       <div id="profile-stats" class="grid grid-cols-3 gap-2 mb-5"></div>
 
@@ -370,6 +396,11 @@
       myGuesses: {},
       selectedAsset: null,
       pendingAsset: null,
+      // Variable stake (whole tokens). Bounds filled from /api/config.
+      selectedStake: 1,
+      minStake: 1,
+      maxStake: 1000,
+      profileWallet: null,
       liveRoundOpen: false,
       currentLbPeriod: 'alltime',
       chartTimer: null,
@@ -428,6 +459,13 @@
         state.paymentsConfigured = cfg.payments_configured != null
           ? !!cfg.payments_configured
           : (!!state.appPubkey || state.isStaging);
+        if (Number.isFinite(cfg.min_stake)) state.minStake = cfg.min_stake;
+        if (Number.isFinite(cfg.max_stake)) state.maxStake = cfg.max_stake;
+        // Default the selected stake to the minimum once bounds are known.
+        if (!(state.selectedStake >= state.minStake && state.selectedStake <= state.maxStake)) {
+          state.selectedStake = state.minStake;
+        }
+        renderStakeControl();
       }).catch(() => {});
       return _configPromise;
     }
@@ -596,15 +634,67 @@
       } catch {}
     }
 
-    async function sendGuessTransaction(memo) {
+    async function sendGuessTransaction(memo, amount) {
       if (!(window.usernode && typeof usernode.sendTransaction === 'function')) {
         throw new Error('Wallet bridge unavailable');
       }
       if (!state.appPubkey) throw new Error('App wallet not configured');
-      const result = await usernode.sendTransaction(state.appPubkey, 1, memo);
+      const result = await usernode.sendTransaction(state.appPubkey, amount, memo);
       const hash = extractTxHash(result);
       if (!hash) throw new Error('Transaction not confirmed');
       return hash;
+    }
+
+    // ── Stake selector ────────────────────────────────────────────────
+    function stakeValid(v) {
+      return Number.isInteger(v) && v >= state.minStake && v <= state.maxStake;
+    }
+
+    function selectStake(v) {
+      state.selectedStake = v;
+      const input = document.getElementById('stake-input');
+      if (input) input.value = '';
+      renderStakeControl();
+      validatePriceInput();
+    }
+
+    function onStakeInput() {
+      const input = document.getElementById('stake-input');
+      const v = parseInt(input?.value, 10);
+      if (Number.isFinite(v)) state.selectedStake = v;
+      renderStakeControl();
+      validatePriceInput();
+    }
+
+    // Reflect the current stake in the chips, hint, and submit-button label.
+    function renderStakeControl() {
+      const v = state.selectedStake;
+      document.querySelectorAll('.stake-chip').forEach(c => {
+        const on = parseInt(c.dataset.stake, 10) === v;
+        c.classList.toggle('bg-accent', on);
+        c.classList.toggle('text-ink-bright', on);
+        c.classList.toggle('border-accent', on);
+        c.classList.toggle('bg-surface', !on);
+        c.classList.toggle('text-ink', !on);
+        c.classList.toggle('border-line', !on);
+      });
+      const hint = document.getElementById('stake-hint');
+      if (hint) {
+        hint.textContent = stakeValid(v)
+          ? `Staking ${v} token${v === 1 ? '' : 's'}`
+          : `Enter a whole number between ${state.minStake} and ${state.maxStake} tokens`;
+        hint.className = 'text-xs mt-1.5 ' + (stakeValid(v) ? 'text-faint' : 'text-neg');
+      }
+      updateSubmitLabel();
+    }
+
+    function updateSubmitLabel() {
+      const btn = document.getElementById('submit-btn');
+      if (!btn || btn.textContent === 'Confirming on-chain…') return;
+      const v = state.selectedStake;
+      btn.textContent = state.myGuesses[state.selectedAsset]
+        ? 'Already staked'
+        : `Stake ${v} Token${v === 1 ? '' : 's'}`;
     }
 
     // ── Toast ─────────────────────────────────────────────────────────
@@ -1018,19 +1108,36 @@
 
       const priceInput = document.getElementById('price-input');
       const msgInput = document.getElementById('message-input');
+      const formInner = document.getElementById('guess-form-inner');
+      const stakeControl = document.getElementById('stake-control');
+      const statusEl = document.getElementById('my-guess-status');
+
       if (existing) {
+        // Locked: a stake is final once placed. Show a read-only confirmation
+        // instead of an editable form and hide the stake selector.
         priceInput.value = parseFloat(existing.price_guess).toFixed(2);
         msgInput.value = existing.message || '';
+        const stakeTok = existing.stake_tokens != null ? parseFloat(existing.stake_tokens) : 1;
+        stakeControl?.classList.add('hidden');
+        formInner.classList.add('hidden');
+        const link = existing.tx_hash ? `<div class="mt-1">${onchainLinkHtml(existing.tx_hash)}</div>` : '';
+        statusEl.innerHTML = `
+          <div class="bg-surface-2/80 rounded-xl p-4 border border-line/50 text-center">
+            <div class="text-sm text-pos font-semibold">Guess locked for ${escHtml(asset)}</div>
+            <div class="text-sm text-ink-bright mt-1">You staked ${stakeTok} token${stakeTok === 1 ? '' : 's'} at ${fmtPrice(existing.price_guess)}</div>
+            ${link}
+            <div class="text-xs text-faint mt-2">One stake per asset per round — come back tomorrow for the next round.</div>
+          </div>`;
       } else {
         priceInput.value = '';
         msgInput.value = '';
+        stakeControl?.classList.remove('hidden');
+        formInner.classList.remove('hidden');
+        statusEl.innerHTML = '';
+        renderStakeControl();
+        validatePriceInput();
+        updateDeltaPreview();
       }
-
-      document.getElementById('submit-btn').textContent = existing ? 'Update Guess — 1 Token' : 'Predict';
-      validatePriceInput();
-      updateDeltaPreview();
-
-      document.getElementById('my-guess-status').innerHTML = '';
 
       // (Re)start the 1-hour preview chart for this asset.
       startChartRefresh(asset);
@@ -1039,7 +1146,12 @@
     function validatePriceInput() {
       const val = parseFloat(document.getElementById('price-input')?.value);
       const btn = document.getElementById('submit-btn');
-      if (btn) btn.disabled = !(state.selectedAsset && val > 0 && state.walletLinked);
+      const locked = !!state.myGuesses[state.selectedAsset];
+      if (btn) {
+        if (btn.textContent === 'Confirming on-chain…') return;
+        btn.disabled = !(state.selectedAsset && val > 0 && state.walletLinked && stakeValid(state.selectedStake) && !locked);
+        updateSubmitLabel();
+      }
     }
 
     function updateDeltaPreview() {
@@ -1072,56 +1184,57 @@
       if (isClosingSoon()) { showToast('Round is closing — try again tomorrow', true); return; }
       const msg = document.getElementById('message-input').value.trim();
 
+      const stake = state.selectedStake;
+      if (!stakeValid(stake)) { showToast(`Stake must be a whole number between ${state.minStake} and ${state.maxStake} tokens`, true); return; }
+      if (state.myGuesses[state.selectedAsset]) { showToast("You've already staked on this asset today", true); return; }
+
       const asset = state.selectedAsset;
       const roundDate = currentRoundDate();
       const priceStr = price.toFixed(2);
-      const memo = `cpg|v1|${roundDate}|${asset}|${priceStr}`;
+      const memo = `cpg|v1|${roundDate}|${asset}|${priceStr}|${stake}`;
       const stashKey = `cpg_tx:${roundDate}:${asset}`;
-      const hadGuess = !!state.myGuesses[asset];
+      const stashSig = `${priceStr}|${stake}`;
 
       const btn = document.getElementById('submit-btn');
-      const idleLabel = hadGuess ? 'Update Guess — 1 Token' : 'Predict';
+      const idleLabel = `Stake ${stake} Token${stake === 1 ? '' : 's'}`;
       btn.disabled = true;
       btn.textContent = 'Confirming on-chain…';
 
       // Step 1 — record the guess (source of truth). If this fails, nothing
       // else happens.
       try {
-        // Reuse a stashed tx for this (round, asset, price) if a prior attempt
-        // confirmed on-chain but failed to record server-side — avoids paying
-        // twice. A price change invalidates the stash (its memo no longer fits).
+        // Reuse a stashed tx for this (round, asset, price, stake) if a prior
+        // attempt confirmed on-chain but failed to record server-side — avoids
+        // paying twice. A price OR stake change invalidates the stash.
         let txHash = null;
         try {
           const stash = localStorage.getItem(stashKey);
           if (stash) {
-            const sep = stash.indexOf('|');
-            const stashPrice = sep >= 0 ? stash.slice(0, sep) : '';
-            const stashHash = sep >= 0 ? stash.slice(sep + 1) : '';
-            if (stashPrice === priceStr && stashHash) txHash = stashHash;
+            const lastSep = stash.lastIndexOf('|');
+            const stashSigSaved = lastSep >= 0 ? stash.slice(0, lastSep) : '';
+            const stashHash = lastSep >= 0 ? stash.slice(lastSep + 1) : '';
+            if (stashSigSaved === stashSig && stashHash) txHash = stashHash;
             else localStorage.removeItem(stashKey);
           }
         } catch {}
 
         if (!txHash) {
-          txHash = await sendGuessTransaction(memo);
-          try { localStorage.setItem(stashKey, `${priceStr}|${txHash}`); } catch {}
+          txHash = await sendGuessTransaction(memo, stake);
+          try { localStorage.setItem(stashKey, `${stashSig}|${txHash}`); } catch {}
         }
 
         await api('/api/guess', {
           method: 'POST',
-          body: JSON.stringify({ asset, price_guess: price, message: msg || null, tx_hash: txHash }),
+          body: JSON.stringify({ asset, price_guess: price, message: msg || null, tx_hash: txHash, stake }),
         });
         try { localStorage.removeItem(stashKey); } catch {}
 
         hapticTap();
-        showToast(`${asset} guess of ${fmtPrice(price)} recorded on-chain!`, false);
-        state.myGuesses[asset] = { asset, price_guess: price, message: msg, tx_hash: txHash };
-        btn.textContent = 'Update Guess — 1 Token';
-        document.getElementById('existing-guess-note').classList.remove('hidden');
-        document.getElementById('my-guess-status').innerHTML =
-          `<div class="text-center text-pos text-sm py-2">Guess recorded for ${asset}!
-             <div class="mt-1">${onchainLinkHtml(txHash)}</div>
-           </div>`;
+        showToast(`Staked ${stake} token${stake === 1 ? '' : 's'} on ${asset} at ${fmtPrice(price)}!`, false);
+        state.myGuesses[asset] = { asset, price_guess: price, stake_tokens: stake, message: msg, tx_hash: txHash };
+        // Re-render the asset into its locked confirmation state.
+        selectGuessAsset(asset);
+        loadMyGuessesForGuessScreen();
       } catch (err) {
         // A stash that survives here is a confirmed payment whose record failed;
         // it stays so the next tap retries the POST instead of re-charging.
@@ -1249,6 +1362,7 @@
           <div>
             <div class="text-xs text-faint mb-0.5">Your guess</div>
             <div class="font-mono text-sm text-ink-bright">${fmtPrice(p.price_guess)}</div>
+            ${p.stake_tokens != null ? `<div class="text-xs text-muted mt-0.5">Staked ${parseFloat(p.stake_tokens)} tok</div>` : ''}
           </div>
           <div class="text-right">
             <div class="text-xs text-faint mb-0.5">Actual close</div>
@@ -1277,7 +1391,7 @@
             <button class="w-full flex justify-between items-center p-4 text-left hover:bg-surface/30 transition-colors" onclick="toggleHistoryRound(this, '${roundId}')">
               <div>
                 <div class="font-semibold text-sm">${dateStr}</div>
-                <div class="text-xs text-faint mt-0.5">${r.assets_processed} assets &bull; ${r.total_pot} tokens in pot</div>
+                <div class="text-xs text-faint mt-0.5">${r.assets_processed} assets &bull; ${parseFloat(r.total_pot || 0)} tokens in pot</div>
               </div>
               <svg class="w-4 h-4 text-faint chevron transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
             </button>
@@ -1322,7 +1436,7 @@
           return `<div class="mb-4">
             <div class="flex justify-between items-center mb-1">
               <span class="text-sm font-bold text-accent-ink">${r.asset}</span>
-              <span class="text-xs text-faint">Close: <span class="text-ink-bright font-mono">${fmtPrice(r.close_price)}</span> &bull; Pot: ${r.pot_total}</span>
+              <span class="text-xs text-faint">Close: <span class="text-ink-bright font-mono">${fmtPrice(r.close_price)}</span> &bull; Pot: ${parseFloat(r.pot_total || 0)} tok</span>
             </div>
             ${payoutRows}
           </div>`;
@@ -1422,14 +1536,69 @@
         profileState.username = data.username || '';
         profileState.display_name = data.display_name || null;
         profileState.bio = data.bio || null;
+        // Server-authoritative wallet (real pubkey, or a demo address under ?demo=1).
+        state.profileWallet = data.wallet_pubkey || null;
         renderProfileCard();
         renderProfileStats(data.stats || {});
+        renderWalletCard();
       } catch {
         cardEl.innerHTML = '<p class="text-red-400 text-sm text-center py-6">Failed to load profile.</p>';
       }
 
+      // Prefer a live bridge address when one is available; refresh the card
+      // once it resolves. (Decoupled from refreshWalletStatus, which is a
+      // Guess-screen concern.)
+      getWalletAddress().then(addr => {
+        if (addr) { state.walletAddress = addr; state.walletLinked = true; renderWalletCard(); }
+      }).catch(() => {});
+
       // Guess history reuses the My Predictions loader, targeting this screen's list.
       loadMyPredictions(0, 'profile-history');
+    }
+
+    // Render the Profile wallet card. Address precedence: live bridge value →
+    // server wallet_pubkey → none (unlinked).
+    function renderWalletCard() {
+      const el = document.getElementById('profile-wallet');
+      if (!el) return;
+      const addr = state.walletAddress || state.profileWallet || null;
+      if (addr) {
+        el.innerHTML = `
+          <div class="flex items-center justify-between gap-3">
+            <div class="min-w-0">
+              <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-green-400"></span>
+                <span class="text-sm font-semibold text-white">Wallet connected</span>
+              </div>
+              <button type="button" onclick="copyText('${escHtml(addr)}')"
+                class="mt-1 font-mono text-xs text-violet-400 hover:text-violet-300 break-all text-left"
+                title="Copy wallet address: ${escHtml(addr)}">${escHtml(shortHash(addr))}</button>
+            </div>
+            <span class="shrink-0 text-xs px-2 py-1 rounded-lg bg-green-900/30 text-green-300 border border-green-700/40">Linked</span>
+          </div>`;
+      } else {
+        el.innerHTML = `
+          <div>
+            <div class="flex items-center gap-2 mb-1">
+              <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+              <span class="text-sm font-semibold text-white">No wallet connected</span>
+            </div>
+            <p class="text-xs text-zinc-400">Link your Usernode wallet to play — each guess stakes tokens from your wallet.</p>
+            <p class="text-xs text-zinc-500 mt-1">Linking happens in the Usernode account/shell that hosts this app, not inside the game. Once linked, tap below.</p>
+            <button type="button" onclick="recheckWallet(this)"
+              class="mt-3 text-xs bg-zinc-700 hover:bg-zinc-600 text-zinc-200 px-3 py-1.5 rounded-lg transition-colors">Check again</button>
+          </div>`;
+      }
+    }
+
+    async function recheckWallet(btn) {
+      if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+      try {
+        const addr = await getWalletAddress();
+        state.walletAddress = addr;
+        state.walletLinked = !!addr || state.isStaging;
+      } catch {}
+      renderWalletCard();
     }
 
     function profileInitial() {
