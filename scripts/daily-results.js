@@ -52,13 +52,16 @@ async function processAsset(pool, roundDate, asset) {
   }
 
   const { rows: guesses } = await pool.query(
-    `SELECT user_id, username, price_guess::float FROM guesses WHERE round_date = $1 AND asset = $2`,
+    `SELECT user_id, username, price_guess::float, stake_tokens::float FROM guesses WHERE round_date = $1 AND asset = $2`,
     [roundDate, asset]
   );
   if (!guesses.length) {
     console.log(`[${asset}] No guesses — skipping.`);
     return { asset, status: 'no guesses' };
   }
+
+  // Pot is the real sum of staked tokens (not a head-count).
+  const potTotal = guesses.reduce((sum, g) => sum + (g.stake_tokens || 0), 0);
 
   const cgId = COINGECKO_IDS[asset];
   let closePrice;
@@ -76,16 +79,16 @@ async function processAsset(pool, roundDate, asset) {
     return { asset, status: 'no price data' };
   }
 
-  console.log(`[${asset}] Close price: $${closePrice}  |  ${guesses.length} guess(es)`);
+  console.log(`[${asset}] Close price: $${closePrice}  |  ${guesses.length} guess(es)  |  pot ${potTotal} tokens`);
 
   const withDist = guesses.map(g => ({ ...g, distance: Math.abs(g.price_guess - closePrice) }));
   withDist.sort((a, b) => a.distance - b.distance);
-  const payoutRows = calculatePayouts(withDist, guesses.length);
+  const payoutRows = calculatePayouts(withDist, potTotal);
 
   await pool.query(
     `INSERT INTO results (round_date, asset, close_price, pot_total) VALUES ($1, $2, $3, $4)
      ON CONFLICT (round_date, asset) DO NOTHING`,
-    [roundDate, asset, closePrice, guesses.length]
+    [roundDate, asset, closePrice, potTotal]
   );
   for (const p of payoutRows) {
     await pool.query(
@@ -96,7 +99,7 @@ async function processAsset(pool, roundDate, asset) {
     );
     console.log(`  Place ${p.place}: ${p.username} → ${p.prize_tokens} tokens`);
   }
-  return { asset, status: 'ok', close_price: closePrice, pot: guesses.length };
+  return { asset, status: 'ok', close_price: closePrice, pot: potTotal };
 }
 
 async function main() {
