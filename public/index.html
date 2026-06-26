@@ -91,9 +91,6 @@
       }
     }
   }</script>
-  <!-- Hosted Usernode bridge: provides window.usernode.sendTransaction /
-       getNodeAddress for recording each guess on-chain. Never vendor this. -->
-  <script src="https://social-vibecoding.usernodelabs.org/usernode-bridge/v1/bridge.js"></script>
 </head>
 <body class="bg-bg text-ink min-h-screen">
 
@@ -221,6 +218,10 @@
         Tap an asset above to start your prediction
       </div>
       <div id="guess-form-inner" class="hidden">
+        <!-- Wallet connection status: connected short address, a Connect/Retry
+             button, or a clear reason (no linked wallet / payments unconfigured).
+             Rendered by renderWalletStatus(); populated by connectWallet(). -->
+        <div id="wallet-status" class="wallet-status mb-3"></div>
         <div id="wallet-notice" class="wallet-notice hidden text-xs text-warn text-center mb-3 p-2 bg-amber-400/10 rounded-lg border border-amber-400/20">
           Link your Usernode wallet to play — each guess sends a 1-token transaction.
         </div>
@@ -379,6 +380,14 @@
       walletLinked: false,
       walletAddress: null,
       explorerBase: '',
+      // Server-authoritative linked-wallet address (JWT usernode_pubkey) — the
+      // source of truth /api/guess gates on. Reconciled with the bridge address.
+      walletPubkey: null,
+      // Whether the server has a real app wallet to receive payments.
+      paymentsConfigured: false,
+      // Transient connect UI state.
+      walletConnecting: false,
+      walletError: null,
     };
 
     // ── API helper ──────────────────────────────────────────────────────
@@ -413,10 +422,18 @@
         state.chainId = cfg.chain_id || 'usernode';
         state.isStaging = !!(cfg.staging || cfg.is_staging);
         state.explorerBase = cfg.explorer_base || '';
+        state.walletPubkey = cfg.usernode_pubkey || null;
+        // Older builds won't send payments_configured — fall back to deriving it
+        // from the resolved app wallet / staging the same way the server does.
+        state.paymentsConfigured = cfg.payments_configured != null
+          ? !!cfg.payments_configured
+          : (!!state.appPubkey || state.isStaging);
       }).catch(() => {});
       return _configPromise;
     }
 
+    // One probe of the bridge for the linked node address. Returns null when the
+    // bridge isn't ready yet (method missing) or has no address.
     async function getWalletAddress() {
       try {
         if (window.usernode && typeof usernode.getNodeAddress === 'function') {
@@ -427,17 +444,120 @@
       return null;
     }
 
-    async function refreshWalletStatus() {
-      await loadConfig();
-      const addr = await getWalletAddress();
-      state.walletAddress = addr;
-      // In staging the bridge runs in mock mode and may not surface an address;
-      // treat the wallet as linked so the form is exercisable.
-      state.walletLinked = !!addr || state.isStaging;
-      const notice = document.getElementById('wallet-notice');
-      if (notice) notice.classList.toggle('hidden', state.walletLinked);
-      validatePriceInput();
+    // The bridge initializes asynchronously (iframe discover handshake, mock
+    // detection). Poll for an address over a bounded window instead of giving up
+    // on a single early probe.
+    async function waitForWalletAddress(maxAttempts = 10, intervalMs = 500) {
+      for (let i = 0; i < maxAttempts; i++) {
+        const addr = await getWalletAddress();
+        if (addr) return addr;
+        if (i < maxAttempts - 1) await new Promise(r => setTimeout(r, intervalMs));
+      }
+      return null;
     }
+
+    // Render the wallet-status block on the Guess screen from current state.
+    function renderWalletStatus() {
+      const el = document.getElementById('wallet-status');
+      const notice = document.getElementById('wallet-notice');
+      // The new status block carries all wallet messaging; keep the legacy
+      // amber notice hidden so we never show two competing hints.
+      if (notice) notice.classList.add('hidden');
+      if (!el) return;
+
+      if (state.isStaging) {
+        el.innerHTML = `<div class="text-xs text-faint text-center">Staging preview — wallet payments are mocked.</div>`;
+        return;
+      }
+      if (state.walletConnecting) {
+        el.innerHTML = `<div class="text-xs text-muted text-center py-1">Connecting wallet…</div>`;
+        return;
+      }
+      if (!state.paymentsConfigured) {
+        el.innerHTML = `<div class="text-xs text-neg text-center p-2 bg-red-400/10 rounded-lg border border-red-400/20">On-chain payments aren't set up yet.</div>`;
+        return;
+      }
+      if (state.walletLinked && state.walletAddress) {
+        el.innerHTML = `<div class="flex items-center justify-center gap-2 text-xs text-pos py-1">
+          <span class="w-1.5 h-1.5 rounded-full bg-pos inline-block"></span>
+          Wallet connected <span class="font-mono text-muted">${escHtml(shortHash(state.walletAddress))}</span>
+        </div>`;
+        return;
+      }
+      const reason = state.walletError === 'no_linked_wallet'
+        ? 'Your account has no linked Usernode wallet.'
+        : state.walletError === 'bridge_unavailable'
+          ? 'Couldn’t reach your Usernode wallet.'
+          : 'Link your Usernode wallet to play — each guess sends a 1-token transaction.';
+      el.innerHTML = `<div class="text-center p-2 bg-amber-400/10 rounded-lg border border-amber-400/20">
+        <p class="text-xs text-warn mb-2">${reason}</p>
+        <button id="wallet-connect-btn" type="button" onclick="connectWallet({ force: true })"
+          class="text-xs bg-accent hover:bg-accent-hover text-ink-bright px-4 py-1.5 rounded-lg transition-colors">
+          ${state.walletError ? 'Retry' : 'Connect wallet'}
+        </button>
+      </div>`;
+    }
+
+    // Idempotent wallet connect. Waits for the bridge to be ready, reconciles the
+    // bridge address with the server's authoritative usernode_pubkey, and updates
+    // the form gate. Safe to call from boot, guess-screen entry, and the
+    // Connect/Retry button. A concurrent call is coalesced unless force is set.
+    let _walletConnectPromise = null;
+    function connectWallet({ force = false } = {}) {
+      if (_walletConnectPromise && !force) return _walletConnectPromise;
+      _walletConnectPromise = (async () => {
+        state.walletConnecting = true;
+        state.walletError = null;
+        renderWalletStatus();
+        try {
+          await loadConfig();
+
+          // Staging: the bridge runs in mock mode and may not surface an
+          // address; treat the wallet as linked so the form is exercisable.
+          if (state.isStaging) {
+            state.walletAddress = state.walletPubkey || null;
+            state.walletLinked = true;
+            return;
+          }
+
+          // No app wallet configured → nothing to pay; don't enable the form.
+          if (!state.paymentsConfigured) {
+            state.walletLinked = false;
+            state.walletAddress = null;
+            return;
+          }
+
+          // Source of truth for "is the wallet linked" is the server's JWT
+          // usernode_pubkey — the same value /api/guess gates on. The bridge
+          // address is best-effort, used for display.
+          const bridgeAddr = await waitForWalletAddress();
+          if (state.walletPubkey) {
+            state.walletAddress = bridgeAddr || state.walletPubkey;
+            state.walletLinked = true;
+          } else if (bridgeAddr) {
+            // Bridge surfaced an address but the account has no linked wallet
+            // server-side — a guess would be rejected, so surface that state.
+            state.walletAddress = bridgeAddr;
+            state.walletLinked = false;
+            state.walletError = 'no_linked_wallet';
+          } else {
+            state.walletAddress = null;
+            state.walletLinked = false;
+            state.walletError = 'bridge_unavailable';
+          }
+        } finally {
+          state.walletConnecting = false;
+          renderWalletStatus();
+          validatePriceInput();
+        }
+      })();
+      const done = _walletConnectPromise;
+      done.finally(() => { if (_walletConnectPromise === done) _walletConnectPromise = null; });
+      return done;
+    }
+
+    // Backwards-compatible alias for existing call sites.
+    function refreshWalletStatus() { return connectWallet(); }
 
     function extractTxHash(r) {
       if (!r) return null;
@@ -1427,8 +1547,10 @@
 
     // ── Boot ─────────────────────────────────────────────────────────
     window.addEventListener('DOMContentLoaded', () => {
-      // On-chain config (app wallet + chain id) for the guess payment flow.
+      // On-chain config (app wallet + chain id) for the guess payment flow, then
+      // warm the wallet connection so the Guess screen is ready when opened.
       loadConfig();
+      connectWallet();
 
       // Load user info for the header avatar + name (prefers display name if set).
       const demoParam = params.get('demo') === '1' ? '?demo=1' : '';
