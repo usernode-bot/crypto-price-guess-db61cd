@@ -4,6 +4,7 @@ const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
 const { verifyGuessTransaction } = require('./lib/tx-match');
 const { calculatePayouts, fetchClosePrice } = require('./lib/settlement');
+const { STAGING_APP_PUBKEY, paymentsConfigured, buildConfig } = require('./lib/wallet-config');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -16,9 +17,9 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 // lookup during verification.
 const APP_PUBKEY = process.env.APP_PUBKEY || '';
 const CHAIN_ID = process.env.CHAIN_ID || 'usernode';
-// Placeholder app wallet surfaced to the staging frontend so the guess form
-// still has a destination for its mock transaction when APP_PUBKEY is unset.
-const STAGING_APP_PUBKEY = 'ut1stagingappwallet000000000000000000';
+// STAGING_APP_PUBKEY (the placeholder destination used when APP_PUBKEY is unset
+// in staging) and the app-wallet resolution helpers live in ./lib/wallet-config
+// so they can be unit-tested without booting the server.
 
 // Variable stake bounds (whole tokens). A guess stakes between MIN_STAKE and
 // MAX_STAKE tokens from the player's wallet; the per-asset pot is the sum of
@@ -80,13 +81,18 @@ app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
 // On-chain config for the frontend: where to send the 1-token guess payment,
 // which chain to await it on, and whether we're in staging (mock chain).
-app.get('/api/config', (_req, res) => {
+app.get('/api/config', (req, res) => {
+  // usernode_pubkey is included only when req.user is present so the public
+  // (unauthenticated) path never leaks a wallet address. payments_configured
+  // tells the frontend whether a real app wallet exists to receive payments.
   res.json({
-    app_pubkey: APP_PUBKEY || (IS_STAGING ? STAGING_APP_PUBKEY : ''),
-    chain_id: CHAIN_ID,
-    staging: IS_STAGING,
-    is_staging: IS_STAGING,
-    explorer_base: process.env.EXPLORER_TX_URL_BASE || null,
+    ...buildConfig({
+      appPubkey: APP_PUBKEY,
+      chainId: CHAIN_ID,
+      isStaging: IS_STAGING,
+      explorerBase: process.env.EXPLORER_TX_URL_BASE || null,
+      user: req.user,
+    }),
     min_stake: MIN_STAKE,
     max_stake: MAX_STAKE,
   });
@@ -245,6 +251,14 @@ app.get('/api/round/current', async (req, res) => {
 
 app.post('/api/guess', async (req, res) => {
   try {
+    // Without a real app wallet there is no destination for the 1-token
+    // payment, so reject clearly instead of recording an unpayable guess.
+    // Staging is always "configured" (placeholder destination + verification
+    // skipped); production requires APP_PUBKEY to be set.
+    if (!paymentsConfigured(APP_PUBKEY, IS_STAGING)) {
+      return res.status(503).json({ error: 'On-chain payments are not configured' });
+    }
+
     const { asset, price_guess, message, tx_hash, stake } = req.body;
     if (!ASSETS.includes(asset)) return res.status(400).json({ error: 'Invalid asset' });
     const pg = parseFloat(price_guess);

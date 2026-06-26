@@ -2,7 +2,7 @@
   "secrets": [
     {
       "key": "APP_PUBKEY",
-      "description": "Usernode blockchain address that receives 1-token guess payments (server-side debit destination)",
+      "description": "Usernode blockchain address that receives 1-token guess payments (server-side debit destination). Required in production — when unset, /api/config reports payments_configured:false and /api/guess returns 503 'On-chain payments are not configured'. Staging falls back to a mock placeholder.",
       "required": false,
       "private": false,
       "default": ""
@@ -57,6 +57,11 @@
       "name": "Guess screen renders 8 asset cards",
       "path": "/#guess",
       "expectSelector": ".asset-card"
+    },
+    {
+      "name": "Guess screen renders the wallet-status block",
+      "path": "/#guess",
+      "expectSelector": ".wallet-status"
     },
     {
       "name": "Guess screen renders 1-hour preview chart",
