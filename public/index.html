@@ -246,7 +246,7 @@
         </div>
         <button id="submit-btn" onclick="submitGuess()" disabled
           class="w-full bg-accent hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed text-ink-bright font-bold py-3 rounded-xl text-base transition-colors">
-          Submit Guess — 1 Token
+          Predict
         </button>
       </div>
 
@@ -1034,7 +1034,7 @@
         msgInput.value = '';
       }
 
-      document.getElementById('submit-btn').textContent = existing ? 'Update Guess — 1 Token' : 'Submit Guess — 1 Token';
+      document.getElementById('submit-btn').textContent = existing ? 'Update Guess — 1 Token' : 'Predict';
       validatePriceInput();
       updateDeltaPreview();
 
@@ -1088,7 +1088,7 @@
       const hadGuess = !!state.myGuesses[asset];
 
       const btn = document.getElementById('submit-btn');
-      const idleLabel = hadGuess ? 'Update Guess — 1 Token' : 'Submit Guess — 1 Token';
+      const idleLabel = hadGuess ? 'Update Guess — 1 Token' : 'Predict';
       btn.disabled = true;
       btn.textContent = 'Confirming on-chain…';
 
