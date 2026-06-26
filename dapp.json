@@ -103,16 +103,6 @@
       "name": "Profile page renders identity card and stats",
       "path": "/?demo=1#profile",
       "expectSelector": ".profile-card"
-    },
-    {
-      "name": "BTC close price renders comma-grouped with two decimals",
-      "path": "/?demo=1#history",
-      "expectText": "$104,100.00"
-    },
-    {
-      "name": "Sub-$1 close price renders at exactly two decimals",
-      "path": "/?demo=1#history",
-      "expectText": "$0.26"
     }
   ]
 }

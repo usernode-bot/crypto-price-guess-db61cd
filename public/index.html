@@ -731,14 +731,6 @@
       return '$' + n.toFixed(4);
     }
 
-    // Signed USD price difference, e.g. +$1,234.56 or -$12.00 — built on
-    // fmtPrice so the two stay in lock-step.
-    function fmtPriceDelta(diff) {
-      const d = parseFloat(diff);
-      const sign = (isNaN(d) || d >= 0) ? '+' : '-';
-      return sign + fmtPrice(Math.abs(d));
-    }
-
     // Shrink a price label's font-size until it fits its tile width without
     // clipping. Starts from the base size and steps down to a readable floor,
     // so full values (BTC/ETH etc.) always show in the 3-column grid.
@@ -927,12 +919,12 @@
           ${guesses.map(g => {
             const cur = state.prices[g.asset]?.usd;
             const diff = cur ? parseFloat(g.price_guess) - cur : null;
-            const diffStr = diff != null ? fmtPriceDelta(diff) : '';
+            const diffStr = diff != null ? (diff >= 0 ? '+' : '') + fmtPrice(Math.abs(diff)).replace('$','') : '';
             const chain = g.tx_hash ? `<span class="ml-2">${onchainLinkHtml(g.tx_hash)}</span>` : '';
             return `<div class="flex justify-between items-center text-sm">
               <span class="font-mono text-ink w-10">${g.asset}</span>
               <span class="font-mono text-ink-bright">${fmtPrice(g.price_guess)}</span>
-              <span class="text-xs ${diff != null ? (diff >= 0 ? 'text-pos' : 'text-neg') : 'text-faint'} flex items-center">${diffStr}${chain}</span>
+              <span class="text-xs ${diff != null ? (diff >= 0 ? 'text-pos' : 'text-neg') : 'text-faint'} flex items-center">${diff != null ? (diff >= 0 ? '+' : '-') + '$' + diffStr : ''}${chain}</span>
             </div>`;
           }).join('')}
         </div>
@@ -1171,7 +1163,7 @@
       const diff = val - cur;
       const pct = (diff / cur * 100).toFixed(2);
       const sign = diff >= 0 ? '+' : '';
-      el.textContent = `${fmtPriceDelta(diff)} (${sign}${pct}%) from current price`;
+      el.textContent = `${sign}${fmtPrice(Math.abs(diff)).replace('$','$')} (${sign}${pct}%) from current price`;
       el.className = 'text-xs mt-1 h-4 ' + (diff >= 0 ? 'text-pos' : 'text-neg');
     }
 
