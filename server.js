@@ -51,6 +51,8 @@ const STAGING_BASE_PRICE = {
 // dynamic selectors without the test framework needing to inject auth tokens.
 const PUBLIC_API_PATHS = new Set([
   '/health',
+  // Browsers request this automatically on every page load; served as 204.
+  '/favicon.ico',
   '/api/admin/daily-results',
   // Public so the frontend can read the app wallet / chain id before auth is
   // established and so staging proposal tests can load it without a token.
@@ -63,6 +65,8 @@ const PUBLIC_API_PATHS = new Set([
 const PUBLIC_PREFIXES = ['/explorer-api/'];
 
 app.use(express.json());
+
+app.get('/favicon.ico', (req, res) => res.status(204).end());
 
 app.use((req, res, next) => {
   const token = req.query.token || req.headers['x-usernode-token'];
