@@ -1,5 +1,5 @@
 // Renders public/icon.png (the homescreen tile declared in dapp.json) from the
-// same geometry as public/favicon.svg. No image dependencies: rasterizes with
+// same geometry as public/icon.svg (the editable source artwork). No image dependencies: rasterizes with
 // 4x4 supersampling and writes the PNG with zlib. Run: node scripts/render-icon.js
 const fs = require('fs');
 const path = require('path');
