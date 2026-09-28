@@ -1,7 +1,5 @@
 {
-  "icon": {
-    "image": "public/icon.png"
-  },
+  "icon": { "image": "brand/icon.png" },
   "secrets": [
     {
       "key": "APP_PUBKEY",
