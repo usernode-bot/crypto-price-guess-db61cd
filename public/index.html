@@ -276,6 +276,7 @@
 
     <!-- ===== HISTORY SCREEN ===== -->
     <div id="screen-history" class="screen hidden">
+      <p id="history-week-summary" class="history-week-summary text-xs text-muted mb-3"></p>
       <div class="flex gap-2 mb-4">
         <button onclick="switchHistoryTab('results')" id="ht-tab-results"
           class="hist-tab flex-1 py-1.5 rounded-lg text-xs font-semibold bg-accent text-ink-bright transition-colors">Results</button>
@@ -1438,7 +1439,18 @@
       const listEl = document.getElementById('history-list');
       listEl.innerHTML = '<p class="text-faint text-sm text-center py-8">Loading history...</p>';
       try {
-        const { history } = await api('/api/history');
+        const demoParam = params.get('demo') === '1' ? '?demo=1' : '';
+        const { history, week } = await api('/api/history' + demoParam);
+
+        const sumEl = document.getElementById('history-week-summary');
+        if (sumEl && week) {
+          const n = week.guesses || 0;
+          const tok = parseFloat(week.tokens_staked || 0).toFixed(2);
+          sumEl.innerHTML = `This week: <span class="font-mono text-ink-bright">${n}</span> `
+            + (n === 1 ? 'guess' : 'guesses')
+            + ` &bull; <span class="font-mono text-ink-bright">${tok}</span> tok staked`;
+        }
+
         if (!history.length) {
           listEl.innerHTML = '<p class="text-faint text-sm text-center py-8">Results will appear here after the first round closes.</p>';
           return;

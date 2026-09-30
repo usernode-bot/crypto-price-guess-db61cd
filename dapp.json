@@ -85,6 +85,12 @@
       "expectSelector": ".history-round"
     },
     {
+      "name": "History weekly summary line renders",
+      "path": "/?demo=1#history",
+      "expectSelector": ".history-week-summary",
+      "expectText": "This week"
+    },
+    {
       "name": "Top Guessers leaderboard renders player rows",
       "path": "/#leaderboard",
       "expectSelector": ".leaderboard-row",
