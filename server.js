@@ -65,7 +65,7 @@ const PUBLIC_API_PATHS = new Set([
   // In staging these are public so proposal tests can verify dynamic selectors
   // (incl. the reward-boost badge, which sums the round pot) without the test
   // framework needing to inject auth tokens.
-  ...(IS_STAGING ? ['/api/prices', '/api/price-history', '/api/history', '/api/leaderboard', '/api/round/current', '/api/user/predictions', '/api/profile'] : []),
+  ...(IS_STAGING ? ['/api/prices', '/api/price-history', '/api/history', '/api/leaderboard', '/api/round/current', '/api/user/predictions', '/api/profile', '/api/daily-closes'] : []),
 ]);
 const PUBLIC_PREFIXES = ['/explorer-api/'];
 
@@ -504,6 +504,40 @@ app.get('/api/history', async (req, res) => {
   }
 });
 
+// Token-major table of recent daily closing prices across ALL assets (not just
+// guessed ones — see daily_closes table / settlement recording below).
+app.get('/api/daily-closes', async (req, res) => {
+  try {
+    const days = Math.min(30, Math.max(1, parseInt(req.query.days) || 7));
+
+    // Most recent N distinct close_dates that actually have data.
+    const { rows: dateRows } = await pool.query(
+      `SELECT DISTINCT close_date FROM daily_closes ORDER BY close_date DESC LIMIT $1`,
+      [days]
+    );
+    const dates = dateRows.map(r => r.close_date.toISOString().slice(0, 10));
+
+    const closes = {};
+    for (const a of ASSETS) closes[a] = {};
+
+    if (dates.length) {
+      const { rows } = await pool.query(
+        `SELECT close_date, asset, close_price FROM daily_closes WHERE close_date = ANY($1::date[])`,
+        [dates]
+      );
+      for (const r of rows) {
+        const d = r.close_date.toISOString().slice(0, 10);
+        if (!closes[r.asset]) closes[r.asset] = {};
+        closes[r.asset][d] = parseFloat(r.close_price);
+      }
+    }
+
+    res.json({ dates, closes });
+  } catch {
+    res.json({ dates: [], closes: {} });
+  }
+});
+
 app.get('/api/leaderboard', async (req, res) => {
   try {
     const period = req.query.period || 'alltime';
@@ -788,38 +822,56 @@ app.post('/api/admin/daily-results', async (req, res) => {
 async function processDailyResults(dbPool, roundDate) {
   const processed = [];
   for (const asset of ASSETS) {
+    // Record the daily close for EVERY asset, independent of guesses/payouts,
+    // so the daily-closes table covers all 12 tokens. Reuse an existing results
+    // close when present to avoid a redundant CoinGecko call.
     const { rows: ex } = await dbPool.query(
-      'SELECT id FROM results WHERE round_date = $1 AND asset = $2', [roundDate, asset]
+      'SELECT id, close_price FROM results WHERE round_date = $1 AND asset = $2', [roundDate, asset]
     );
-    if (ex.length) { processed.push({ asset, status: 'already processed' }); continue; }
 
     const { rows: guesses } = await dbPool.query(
       `SELECT user_id, username, price_guess::float, stake_tokens::float FROM guesses WHERE round_date = $1 AND asset = $2`,
       [roundDate, asset]
     );
-    if (!guesses.length) { processed.push({ asset, status: 'no guesses' }); continue; }
 
     // The pot is the sum of real staked tokens (not a head-count). The closest
     // guesses split it via calculatePayouts, which already takes an arbitrary pot.
     const potTotal = guesses.reduce((sum, g) => sum + (g.stake_tokens || 0), 0);
 
-    const cgId = COINGECKO_IDS[asset];
-    // Settle against the round's CLOSING price — the 00:00-UTC snapshot of the
-    // day AFTER round_date — via the shared helper (see lib/settlement.js).
-    let closePrice;
-    try {
-      closePrice = await fetchClosePrice(cgId, roundDate, { log: (msg) => console.warn(`[${asset}] ${msg}`) });
-    } catch (e) {
-      console.error(`CoinGecko error for ${asset}:`, e.message);
-      processed.push({ asset, status: `error: ${e.message}` });
-      continue;
+    // Resolve the close: prefer the already-stored results value, else fetch via
+    // the shared settlement helper (the round's CLOSING price — the 00:00-UTC
+    // snapshot of the day AFTER round_date).
+    let closePrice = ex.length ? parseFloat(ex[0].close_price) : null;
+    if (closePrice == null) {
+      const cgId = COINGECKO_IDS[asset];
+      try {
+        closePrice = await fetchClosePrice(cgId, roundDate, { log: (msg) => console.warn(`[${asset}] ${msg}`) });
+      } catch (e) {
+        console.error(`CoinGecko error for ${asset}:`, e.message);
+        processed.push({ asset, status: `error: ${e.message}` });
+        await new Promise(r => setTimeout(r, 500));
+        continue;
+      }
+      // Space out live CoinGecko calls only (a reused results value needs none).
+      await new Promise(r => setTimeout(r, 500));
     }
 
-    if (!closePrice) {
+    if (closePrice == null) {
       console.warn(`No price data for ${asset} on ${roundDate}`);
       processed.push({ asset, status: 'no price data' });
       continue;
     }
+
+    // Comprehensive per-token daily close (all assets, every day).
+    await dbPool.query(
+      `INSERT INTO daily_closes (close_date, asset, close_price, source) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (close_date, asset) DO NOTHING`,
+      [roundDate, asset, closePrice, 'settlement']
+    );
+
+    // Results + payouts are gated on participation, exactly as before.
+    if (ex.length) { processed.push({ asset, status: 'already processed', close_price: closePrice }); continue; }
+    if (!guesses.length) { processed.push({ asset, status: 'no guesses', close_price: closePrice }); continue; }
 
     const withDist = guesses.map(g => ({ ...g, distance: Math.abs(g.price_guess - closePrice) }));
     withDist.sort((a, b) => a.distance - b.distance);
@@ -838,7 +890,6 @@ async function processDailyResults(dbPool, roundDate) {
         [roundDate, asset, p.user_id, p.username, p.place, p.price_guess, p.prize_tokens]
       );
     }
-    await new Promise(r => setTimeout(r, 500));
     processed.push({ asset, status: 'ok', close_price: closePrice, pot: potTotal });
   }
   return processed;
@@ -920,6 +971,16 @@ async function seedStaging() {
         `INSERT INTO results (round_date, asset, close_price, pot_total) VALUES ($1, $2, $3, $4)
          ON CONFLICT (round_date, asset) DO NOTHING`,
         [roundDate, asset, closePrice, potTotal]
+      );
+
+      // Daily closes for ALL 12 assets across these past dates, so the
+      // Closes table renders fully populated in staging (independent of the
+      // results backfill ordering). Today's date is intentionally omitted —
+      // the current round hasn't settled yet.
+      await pool.query(
+        `INSERT INTO daily_closes (close_date, asset, close_price, source) VALUES ($1, $2, $3, $4)
+         ON CONFLICT (close_date, asset) DO NOTHING`,
+        [roundDate, asset, closePrice, 'staging-seed']
       );
 
       const offset = (ai + priceIdx) % 5;
@@ -1084,6 +1145,26 @@ async function start() {
         created_at TIMESTAMPTZ DEFAULT NOW(),
         UNIQUE (round_date, asset, user_id)
       )
+    `);
+    // Comprehensive per-token daily closing prices, covering ALL assets
+    // (decoupled from `results`, which only holds guessed assets). Public:
+    // market prices only, no user data.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS daily_closes (
+        close_date DATE NOT NULL,
+        asset VARCHAR(10) NOT NULL,
+        close_price NUMERIC(20,8) NOT NULL,
+        source TEXT,
+        recorded_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (close_date, asset)
+      )
+    `);
+    // One-time idempotent backfill: seed daily_closes from existing settled
+    // rounds so the table has immediate history for previously-guessed assets.
+    await pool.query(`
+      INSERT INTO daily_closes (close_date, asset, close_price, source)
+      SELECT round_date, asset, close_price, 'backfill:results' FROM results
+      ON CONFLICT (close_date, asset) DO NOTHING
     `);
 
     // Widen pot/prize columns to hold real summed-stake pots (was a head-count).
