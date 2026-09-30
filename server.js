@@ -467,13 +467,38 @@ app.get('/api/round/:date/results', async (req, res) => {
   }
 });
 
-app.get('/api/history', async (_req, res) => {
+app.get('/api/history', async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT round_date, COUNT(DISTINCT asset) AS assets_processed, SUM(pot_total) AS total_pot
       FROM results GROUP BY round_date ORDER BY round_date DESC LIMIT 30
     `);
-    res.json({ history: rows });
+
+    // Weekly personal summary for the History screen. Week start reuses the
+    // leaderboard's "week" period definition (Monday 00:00 UTC) and buckets by
+    // round_date, so it lines up with how rounds are filtered everywhere else.
+    const isDemo = IS_STAGING && req.query.demo === '1';
+    const userId = isDemo ? 900001 : (req.user ? req.user.id : null);
+
+    let week = { guesses: 0, tokens_staked: 0 };
+    if (userId) {
+      const now = new Date();
+      const monday = new Date(now);
+      monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7));
+      monday.setUTCHours(0, 0, 0, 0);
+      const weekStart = monday.toISOString().slice(0, 10);
+      const { rows: wkRows } = await pool.query(
+        `SELECT COUNT(*) AS guesses, COALESCE(SUM(stake_tokens), 0) AS tokens_staked
+         FROM guesses WHERE user_id = $1 AND round_date >= $2`,
+        [userId, weekStart]
+      );
+      week = {
+        guesses: parseInt(wkRows[0].guesses) || 0,
+        tokens_staked: parseFloat(wkRows[0].tokens_staked) || 0,
+      };
+    }
+
+    res.json({ history: rows, week });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
