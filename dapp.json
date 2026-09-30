@@ -1,8 +1,9 @@
 {
+  "icon": { "image": "brand/icon.png" },
   "secrets": [
     {
       "key": "APP_PUBKEY",
-      "description": "Usernode blockchain address that receives 1-token guess payments (server-side debit destination)",
+      "description": "Usernode blockchain address that receives 1-token guess payments (server-side debit destination). Required in production — when unset, /api/config reports payments_configured:false and /api/guess returns 503 'On-chain payments are not configured'. Staging falls back to a mock placeholder.",
       "required": false,
       "private": false,
       "default": ""
@@ -59,14 +60,35 @@
       "expectSelector": ".asset-card"
     },
     {
+      "name": "Guess screen renders the wallet-status block",
+      "path": "/#guess",
+      "expectSelector": ".wallet-status"
+    },
+    {
       "name": "Guess screen renders 1-hour preview chart",
       "path": "/#guess",
       "expectSelector": ".guess-chart"
     },
     {
+      "name": "Guess screen renders the stake selector",
+      "path": "/#guess",
+      "expectSelector": ".stake-chip"
+    },
+    {
+      "name": "Profile renders the wallet card",
+      "path": "/?demo=1#profile",
+      "expectSelector": ".wallet-card"
+    },
+    {
       "name": "History screen renders round list",
       "path": "/#history",
       "expectSelector": ".history-round"
+    },
+    {
+      "name": "History weekly summary line renders",
+      "path": "/?demo=1#history",
+      "expectSelector": ".history-week-summary",
+      "expectText": "This week"
     },
     {
       "name": "Top Guessers leaderboard renders player rows",
