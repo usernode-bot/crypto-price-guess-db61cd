@@ -115,6 +115,11 @@
       "name": "History screen exposes the Closes tab",
       "path": "/#history",
       "expectSelector": "#ht-tab-closes"
+    },
+    {
+      "name": "History screen shows the search box",
+      "path": "/?demo=1#history",
+      "expectSelector": "#history-search"
     }
   ]
 }

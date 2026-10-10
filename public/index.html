@@ -277,6 +277,9 @@
     <!-- ===== HISTORY SCREEN ===== -->
     <div id="screen-history" class="screen hidden">
       <p id="history-week-summary" class="history-week-summary text-xs text-muted mb-3"></p>
+      <input id="history-search" type="search" autocomplete="off" placeholder="Search token or name" aria-label="Search token or name"
+        class="w-full bg-surface-2 border border-line rounded-xl px-4 py-2 text-sm text-ink focus:outline-none focus:border-accent transition-colors mb-3"
+        oninput="applyHistorySearch()">
       <div class="flex gap-2 mb-4">
         <button onclick="switchHistoryTab('results')" id="ht-tab-results"
           class="hist-tab flex-1 py-1.5 rounded-lg text-xs font-semibold bg-accent text-ink-bright transition-colors">Results</button>
@@ -860,6 +863,8 @@
         if (predList) delete predList.dataset.loaded;
         const closesEl = document.getElementById('daily-closes-table');
         if (closesEl) delete closesEl.dataset.loaded;
+        const searchEl = document.getElementById('history-search');
+        if (searchEl) searchEl.value = '';
         loadHistory();
         if (params.get('demo') === '1') {
           switchHistoryTab('mine');
@@ -1340,6 +1345,57 @@
           loadDailyCloses();
         }
       }
+
+      applyHistorySearch();
+    }
+
+    // Filter the rows of every History panel against the search box's text.
+    // Rows carry a lowercase `data-search` string; hidden panels are filtered
+    // too so the kept query applies when you switch tabs.
+    function applyHistorySearch() {
+      const q = (document.getElementById('history-search')?.value || '').trim().toLowerCase();
+
+      // Results: token blocks inside each opened round
+      document.querySelectorAll('#history-list .round-detail').forEach(detail => {
+        if (!detail.dataset.loaded) return;
+        filterHistoryRows(detail, '.round-asset', q, 'No matches in this round',
+          'text-faint text-xs text-center py-2');
+      });
+
+      const closesEl = document.getElementById('daily-closes-table');
+      if (closesEl && closesEl.dataset.loaded) {
+        filterHistoryRows(closesEl, 'tr.daily-close-row', q, 'No matches',
+          'text-faint text-sm text-center py-8');
+      }
+
+      const predEl = document.getElementById('my-predictions-list');
+      if (predEl && predEl.dataset.loaded) {
+        filterHistoryRows(predEl, '.prediction-row', q, 'No matches',
+          'text-faint text-sm text-center py-8');
+      }
+    }
+
+    // Toggle `hidden` on each tagged row, then add or remove the empty state.
+    // Containers with no tagged rows (loading, error or no data) are left alone.
+    function filterHistoryRows(container, selector, q, emptyMsg, emptyCls) {
+      const rows = container.querySelectorAll(selector);
+      let visible = 0;
+      rows.forEach(el => {
+        const show = q === '' || (el.dataset.search || '').includes(q);
+        el.classList.toggle('hidden', !show);
+        if (show) visible++;
+      });
+
+      container.querySelectorAll('.search-empty').forEach(el => el.remove());
+      if (q !== '' && rows.length > 0 && visible === 0) {
+        const p = document.createElement('p');
+        p.className = 'search-empty ' + emptyCls;
+        p.textContent = emptyMsg;
+        // Keep the message above the "Load more" button on My Predictions.
+        const loadMore = container.querySelector('.load-more-predictions');
+        if (loadMore) container.insertBefore(p, loadMore);
+        else container.appendChild(p);
+      }
     }
 
     // ── DAILY CLOSES ──────────────────────────────────────────────────
@@ -1374,7 +1430,7 @@
             const cls = (v != null) ? 'text-ink-bright' : 'text-faint';
             return `<td class="px-3 py-2 text-right font-mono ${cls} whitespace-nowrap">${txt}</td>`;
           }).join('');
-          return `<tr class="daily-close-row border-t border-line/40" data-asset="${a}">
+          return `<tr class="daily-close-row border-t border-line/40" data-asset="${a}" data-search="${escHtml((a + ' ' + (ASSET_NAMES[a] || a)).toLowerCase())}">
             <th scope="row" class="daily-close-asset sticky left-0 z-10 bg-surface-2/95 backdrop-blur px-3 py-2 text-left whitespace-nowrap">
               <span class="font-bold text-sm text-ink-bright">${a}</span>
               <span class="block text-xs text-faint">${escHtml(ASSET_NAMES[a] || a)}</span>
@@ -1396,6 +1452,7 @@
               <tbody>${bodyRows}</tbody>
             </table>
           </div>`;
+        applyHistorySearch();
       } catch {
         el.innerHTML = '<p class="text-neg text-sm text-center py-8">Failed to load closing prices.</p>';
       }
@@ -1451,6 +1508,7 @@
           listEl.innerHTML = '<p class="text-neg text-sm text-center py-8">Failed to load predictions.</p>';
         }
       }
+      applyHistorySearch();
     }
 
     function renderPredictionCard(p) {
@@ -1482,7 +1540,7 @@
         ? `<div class="mt-1.5 pt-1.5 border-t border-line/40">${onchainLinkHtml(p.tx_hash)}</div>`
         : '';
 
-      return `<div class="prediction-row bg-surface-2/80 rounded-xl p-3 mb-2 border border-line/50">
+      return `<div class="prediction-row bg-surface-2/80 rounded-xl p-3 mb-2 border border-line/50" data-search="${escHtml((p.asset + ' ' + (ASSET_NAMES[p.asset] || p.asset)).toLowerCase())}">
         <div class="flex justify-between items-center mb-2">
           <div>
             <span class="text-xs text-faint">${fmtDate(p.round_date)}</span>
@@ -1568,7 +1626,7 @@
 
       try {
         const { results } = await api(`/api/round/${roundId}/results`);
-        detail.innerHTML = results.map(r => {
+        detail.innerHTML = results.map((r, i) => {
           const payoutRows = (r.payouts || []).slice(0, 3).map(p =>
             `<div class="flex justify-between text-xs py-1 border-t border-line/50">
               <span class="text-muted">${place(p.place)} ${escHtml(p.username)}</span>
@@ -1577,14 +1635,19 @@
             </div>`
           ).join('') || '<div class="text-xs text-faint pt-1">No paid places</div>';
 
-          return `<div class="mb-4">
+          const searchStr = [r.asset, ASSET_NAMES[r.asset] || '']
+            .concat((r.payouts || []).map(p => p.username))
+            .join(' ').toLowerCase();
+
+          return `<div class="round-asset mb-4${i > 0 ? ' border-t border-line/50 pt-2' : ''}" data-search="${escHtml(searchStr)}">
             <div class="flex justify-between items-center mb-1">
               <span class="text-sm font-bold text-accent-ink">${r.asset}</span>
               <span class="text-xs text-faint">Close: <span class="text-ink-bright font-mono">${fmtPrice(r.close_price)}</span> &bull; Pot: ${parseFloat(r.pot_total || 0)} tok</span>
             </div>
             ${payoutRows}
           </div>`;
-        }).join('<hr class="border-line/50 my-2">');
+        }).join('');
+        applyHistorySearch();
       } catch {
         detail.innerHTML = '<p class="text-neg text-xs text-center py-2">Failed to load results.</p>';
       }
