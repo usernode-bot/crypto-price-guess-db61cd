@@ -121,16 +121,17 @@
            Always rendered; values filled by renderStreakCard() from /api/streaks.
            A win = the closest guess for a token (place 1 in that token's payouts). -->
       <div id="streak-card" class="streak-card mb-4 bg-surface-2/80 rounded-xl p-3 border border-line/50">
-        <div class="grid grid-cols-2 gap-2">
-          <div class="streak-tile bg-surface/60 rounded-lg p-2.5 text-center">
-            <div id="streak-daily" class="font-mono text-2xl font-bold text-accent-ink leading-tight">0 days</div>
+        <p id="streak-error" class="hidden text-center text-xs text-zinc-400 py-2">Couldn&rsquo;t load your streak</p>
+        <div id="streak-tiles" class="grid grid-cols-2 gap-2">
+          <div class="streak-tile text-center">
+            <div id="streak-daily" class="font-mono text-2xl font-bold text-accent-ink leading-tight">&ndash;</div>
             <div class="text-xs font-semibold text-ink mt-0.5">Daily streak</div>
-            <div id="streak-daily-best" class="text-xs text-faint">Best 0</div>
+            <div id="streak-daily-best" class="text-xs text-zinc-400">&ndash;</div>
           </div>
-          <div class="streak-tile bg-surface/60 rounded-lg p-2.5 text-center">
-            <div id="streak-run" class="font-mono text-2xl font-bold text-accent-ink leading-tight">0</div>
+          <div class="streak-tile text-center">
+            <div id="streak-run" class="font-mono text-2xl font-bold text-accent-ink leading-tight">&ndash;</div>
             <div class="text-xs font-semibold text-ink mt-0.5">Wins in a row</div>
-            <div id="streak-run-best" class="text-xs text-faint">Best 0</div>
+            <div id="streak-run-best" class="text-xs text-zinc-400">&ndash;</div>
           </div>
         </div>
       </div>
@@ -139,6 +140,10 @@
       <div id="boost-banner" class="mb-4"></div>
 
       <!-- Live price + pot grid -->
+      <div id="price-error" class="hidden mb-2 flex items-center justify-between gap-2 bg-surface-2/80 border border-line/50 rounded-xl px-3 py-2">
+        <span class="text-xs text-zinc-400">Prices couldn&rsquo;t load. Pull to retry.</span>
+        <button onclick="loadPricesHome()" class="text-xs bg-accent hover:bg-accent-hover text-ink-bright px-2.5 py-1 rounded-md transition-colors shrink-0">Retry</button>
+      </div>
       <div id="price-grid" class="grid grid-cols-2 gap-2 mb-5"></div>
 
       <!-- My guesses today -->
@@ -430,6 +435,7 @@
 
     const state = {
       prices: {},
+      pricesFailed: false,
       currentRound: null,
       myGuesses: {},
       selectedAsset: null,
@@ -911,7 +917,7 @@
         const data = await api('/api/streaks' + demoParam);
         renderStreakCard(data.streaks || {});
       } catch {
-        renderStreakCard(null); // keep the card up, values at zero
+        renderStreakError(); // never show zeros here — that reads as a lost streak
       }
     }
 
@@ -921,18 +927,33 @@
       const days = daily.current ?? 0;
       const el = document.getElementById('streak-daily');
       if (!el) return;
+      showStreakTiles(true);
       el.textContent = `${days} ${days === 1 ? 'day' : 'days'}`;
       document.getElementById('streak-daily-best').textContent = `Best ${daily.best ?? 0}`;
       document.getElementById('streak-run').textContent = String(run.current ?? 0);
       document.getElementById('streak-run-best').textContent = `Best ${run.best ?? 0}`;
     }
 
+    // On a failed fetch, swap the values for a faint message instead of zeros.
+    function renderStreakError() {
+      showStreakTiles(false);
+    }
+
+    function showStreakTiles(show) {
+      const err = document.getElementById('streak-error');
+      const tiles = document.getElementById('streak-tiles');
+      if (err) err.classList.toggle('hidden', show);
+      if (tiles) tiles.classList.toggle('hidden', !show);
+    }
+
     async function loadPricesHome() {
       try {
         const { prices } = await api('/api/prices');
         state.prices = prices || {};
+        state.pricesFailed = false;
         renderPriceGrid();
       } catch {
+        state.pricesFailed = true; // banner + no fake prices or pots
         renderPriceGrid();
       }
     }
@@ -940,6 +961,8 @@
     function renderPriceGrid() {
       const grid = document.getElementById('price-grid');
       if (!grid) return;
+      const errEl = document.getElementById('price-error');
+      if (errEl) errEl.classList.toggle('hidden', !state.pricesFailed);
       grid.innerHTML = ASSETS.map(a => {
         const p = state.prices[a];
         const priceStr = p ? fmtPrice(p.usd) : '—';
@@ -958,7 +981,7 @@
           <div class="font-mono font-bold text-base text-ink-bright">${priceStr}</div>
           <div class="flex justify-between items-center mt-1">
             <span class="text-xs ${chgColor}">${chgStr}</span>
-            <span class="text-xs text-faint">Pot: ${pot} tokens</span>
+            <span class="text-xs text-faint">${state.pricesFailed ? '' : `Pot: ${pot} tokens`}</span>
           </div>
         </div>`;
       }).join('');
