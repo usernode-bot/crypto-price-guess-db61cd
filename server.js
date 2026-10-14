@@ -4,6 +4,7 @@ const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
 const { verifyGuessTransaction } = require('./lib/tx-match');
 const { calculatePayouts, fetchClosePrice } = require('./lib/settlement');
+const { computeStreaks } = require('./lib/streaks');
 const { STAGING_APP_PUBKEY, paymentsConfigured, buildConfig } = require('./lib/wallet-config');
 
 // The platform's address, injected by the platform at deploy (#2047). Never
@@ -65,7 +66,7 @@ const PUBLIC_API_PATHS = new Set([
   // In staging these are public so proposal tests can verify dynamic selectors
   // (incl. the reward-boost badge, which sums the round pot) without the test
   // framework needing to inject auth tokens.
-  ...(IS_STAGING ? ['/api/prices', '/api/price-history', '/api/history', '/api/leaderboard', '/api/round/current', '/api/user/predictions', '/api/profile', '/api/daily-closes'] : []),
+  ...(IS_STAGING ? ['/api/prices', '/api/price-history', '/api/history', '/api/leaderboard', '/api/round/current', '/api/user/predictions', '/api/profile', '/api/daily-closes', '/api/streaks'] : []),
 ]);
 const PUBLIC_PREFIXES = ['/explorer-api/'];
 
@@ -558,9 +559,18 @@ app.get('/api/leaderboard', async (req, res) => {
     const accWhere = cutoffDate ? 'AND g.round_date >= $1' : '';
     const payWhere = cutoffDate ? 'WHERE round_date >= $1' : '';
 
+    // "Me" for the own-row highlight: ?demo=1 in staging resolves to the demo
+    // user (same pattern as /api/history), otherwise the JWT user. -1 matches
+    // no one for anonymous visitors.
+    const isDemo = IS_STAGING && req.query.demo === '1';
+    const meId = isDemo ? 900001 : (req.user ? req.user.id : -1);
+    const meParamIdx = params.push(meId); // $2 when a period cutoff exists, else $1
+
     // Top Guessers: per-player prediction accuracy from settled guesses
     // (a guess whose (round_date, asset) has a results row), LEFT JOINed
     // onto payout totals so accurate players with no prize still appear.
+    // Ranked by WINS (place-1 payouts — the closest guess per token), then
+    // accuracy, then tokens won. Streaks deliberately don't feed this score.
     const { rows } = await pool.query(`
       WITH acc AS (
         SELECT g.user_id,
@@ -579,50 +589,135 @@ app.get('/api/leaderboard', async (req, res) => {
                COUNT(DISTINCT round_date) AS rounds_with_prizes
         FROM payouts ${payWhere}
         GROUP BY user_id
+      ),
+      ranked AS (
+        SELECT acc.user_id,
+               COALESCE(pr.display_name, acc.username) AS username,
+               acc.accuracy_pct,
+               acc.guesses_count,
+               COALESCE(pay.total_won, 0) AS total_won,
+               COALESCE(pay.wins, 0) AS wins,
+               COALESCE(pay.rounds_with_prizes, 0) AS rounds_with_prizes,
+               ROW_NUMBER() OVER (
+                 ORDER BY COALESCE(pay.wins, 0) DESC,
+                          acc.accuracy_pct DESC,
+                          COALESCE(pay.total_won, 0) DESC,
+                          acc.guesses_count DESC,
+                          acc.username ASC
+               ) AS rank
+        FROM acc
+        LEFT JOIN pay ON pay.user_id = acc.user_id
+        LEFT JOIN profiles pr ON pr.user_id = acc.user_id
+        WHERE acc.guesses_count >= 1
       )
-      SELECT acc.username,
-             acc.accuracy_pct,
-             acc.guesses_count,
-             COALESCE(pay.total_won, 0) AS total_won,
-             COALESCE(pay.wins, 0) AS wins,
-             COALESCE(pay.rounds_with_prizes, 0) AS rounds_with_prizes
-      FROM acc LEFT JOIN pay ON pay.user_id = acc.user_id
-      WHERE acc.guesses_count >= 1
-      ORDER BY acc.accuracy_pct DESC, total_won DESC, acc.guesses_count DESC, acc.username ASC
+      SELECT rank, username, accuracy_pct, guesses_count, total_won, wins, rounds_with_prizes,
+             (user_id = $${meParamIdx}) AS is_me
+      FROM ranked
+      ORDER BY rank
       LIMIT 50
     `, params);
 
+    // ROW_NUMBER() is bigint → node-pg returns it as a string; the frontend
+    // prints it as "#N", so hand it over as a number.
+    for (const r of rows) r.rank = parseInt(r.rank);
+
     let myStats = null;
-    if (req.user) {
-      const myAccWhere = cutoffDate ? 'AND g.round_date >= $2' : '';
-      const myPayWhere = cutoffDate ? 'AND round_date >= $2' : '';
-      const myParams = cutoffDate ? [req.user.id, cutoffDate] : [req.user.id];
+    if (req.user || isDemo) {
+      // Same ranked CTE, un-LIMITed and filtered to "me" — so the You row shows
+      // the player's real global rank even when they're outside the top 50.
+      // No row when the player has no settled guess yet → rank stays null.
+      const myAccWhere = cutoffDate ? 'AND g.round_date >= $1' : '';
+      const myPayWhere = cutoffDate ? 'WHERE round_date >= $1' : '';
       const { rows: myStatRows } = await pool.query(`
-        SELECT (
-                 SELECT ROUND((AVG(GREATEST(0, 1 - ABS(g.price_guess - r.close_price) / NULLIF(r.close_price, 0))) * 100)::numeric, 1)
-                 FROM guesses g
-                 JOIN results r ON r.round_date = g.round_date AND r.asset = g.asset
-                 WHERE g.user_id = $1 ${myAccWhere}
-               ) AS accuracy_pct,
-               (
-                 SELECT COUNT(*)
-                 FROM guesses g
-                 JOIN results r ON r.round_date = g.round_date AND r.asset = g.asset
-                 WHERE g.user_id = $1 ${myAccWhere}
-               ) AS guesses_count,
-               (
-                 SELECT ROUND(COALESCE(SUM(prize_tokens), 0)::numeric, 2)
-                 FROM payouts WHERE user_id = $1 ${myPayWhere}
-               ) AS total_won,
-               (
-                 SELECT COUNT(*) FILTER (WHERE place = 1)
-                 FROM payouts WHERE user_id = $1 ${myPayWhere}
-               ) AS wins
-      `, myParams);
-      myStats = myStatRows[0];
+        WITH acc AS (
+          SELECT g.user_id,
+                 MAX(g.username) AS username,
+                 ROUND((AVG(GREATEST(0, 1 - ABS(g.price_guess - r.close_price) / NULLIF(r.close_price, 0))) * 100)::numeric, 1) AS accuracy_pct,
+                 COUNT(*) AS guesses_count
+          FROM guesses g
+          JOIN results r ON r.round_date = g.round_date AND r.asset = g.asset
+          WHERE TRUE ${myAccWhere}
+          GROUP BY g.user_id
+        ),
+        pay AS (
+          SELECT user_id,
+                 ROUND(SUM(prize_tokens)::numeric, 2) AS total_won,
+                 COUNT(*) FILTER (WHERE place = 1) AS wins,
+                 COUNT(DISTINCT round_date) AS rounds_with_prizes
+          FROM payouts ${myPayWhere}
+          GROUP BY user_id
+        ),
+        ranked AS (
+          SELECT acc.user_id,
+                 acc.accuracy_pct,
+                 acc.guesses_count,
+                 COALESCE(pay.total_won, 0) AS total_won,
+                 COALESCE(pay.wins, 0) AS wins,
+                 COALESCE(pay.rounds_with_prizes, 0) AS rounds_with_prizes,
+                 ROW_NUMBER() OVER (
+                   ORDER BY COALESCE(pay.wins, 0) DESC,
+                            acc.accuracy_pct DESC,
+                            COALESCE(pay.total_won, 0) DESC,
+                            acc.guesses_count DESC,
+                            acc.username ASC
+                 ) AS rank
+          FROM acc
+          LEFT JOIN pay ON pay.user_id = acc.user_id
+          WHERE acc.guesses_count >= 1
+        )
+        SELECT rank, accuracy_pct, guesses_count, total_won, wins, rounds_with_prizes
+        FROM ranked WHERE user_id = $${meParamIdx}
+      `, params);
+      myStats = myStatRows[0] || {
+        rank: null, accuracy_pct: null, guesses_count: 0,
+        total_won: 0, wins: 0, rounds_with_prizes: 0,
+      };
+      if (myStats.rank != null) myStats.rank = parseInt(myStats.rank);
     }
 
     res.json({ leaderboard: rows, my_stats: myStats });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Home-screen streaks: consecutive UTC days with at least one winning guess
+// (place 1 — the closest guess for that token), and the current/longest run of
+// consecutive winning guesses. Computed on request from guesses⋈results⋈payouts
+// — no new tables, no background job.
+app.get('/api/streaks', async (req, res) => {
+  try {
+    const isDemo = IS_STAGING && req.query.demo === '1';
+    const userId = isDemo ? 900001 : (req.user ? req.user.id : null);
+    if (!userId) {
+      return res.json({
+        streaks: { daily: { current: 0, best: 0 }, in_a_row: { current: 0, best: 0 } },
+      });
+    }
+
+    // Every settled guess (one with a results row) for this user, in the order
+    // the win-run streak is defined: round_date, then submitted_at (asset as a
+    // deterministic tie-break — all of a round's guesses share a submitted_at
+    // in practice). `won` = the guess holds a place-1 payout.
+    const { rows } = await pool.query(`
+      SELECT g.round_date, g.submitted_at, g.asset,
+             COALESCE(p.place, 0) = 1 AS won
+      FROM guesses g
+      JOIN results r ON r.round_date = g.round_date AND r.asset = g.asset
+      LEFT JOIN payouts p ON p.round_date = g.round_date AND p.asset = g.asset
+                         AND p.user_id = g.user_id
+      WHERE g.user_id = $1
+      ORDER BY g.round_date ASC, g.submitted_at ASC, g.asset ASC
+    `, [userId]);
+
+    // Latest settled round date overall — the anchor the daily streak counts
+    // back from. Today's open round never appears here, so it can't break a run.
+    const { rows: lastRows } = await pool.query(`SELECT MAX(round_date) AS latest FROM results`);
+    const latest = lastRows[0] && lastRows[0].latest
+      ? lastRows[0].latest.toISOString().slice(0, 10)
+      : null;
+
+    res.json({ streaks: computeStreaks(rows, latest) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

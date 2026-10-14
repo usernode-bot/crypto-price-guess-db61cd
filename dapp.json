@@ -97,6 +97,17 @@
       "expectText": "Top Guessers"
     },
     {
+      "name": "Home shows the streak card",
+      "path": "/?demo=1",
+      "expectSelector": ".streak-card",
+      "expectText": "Daily streak"
+    },
+    {
+      "name": "Board highlights the player's own row",
+      "path": "/?demo=1#leaderboard",
+      "expectSelector": ".leaderboard-row-me"
+    },
+    {
       "name": "My Predictions tab renders prediction cards",
       "path": "/?demo=1#history",
       "expectSelector": ".prediction-row"

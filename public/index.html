@@ -117,6 +117,24 @@
         <p class="text-xs text-faint mt-1">Resets at 00:00 UTC daily</p>
       </div>
 
+      <!-- Streak card: consecutive winning days and consecutive winning guesses.
+           Always rendered; values filled by renderStreakCard() from /api/streaks.
+           A win = the closest guess for a token (place 1 in that token's payouts). -->
+      <div id="streak-card" class="streak-card mb-4 bg-surface-2/80 rounded-xl p-3 border border-line/50">
+        <div class="grid grid-cols-2 gap-2">
+          <div class="streak-tile bg-surface/60 rounded-lg p-2.5 text-center">
+            <div id="streak-daily" class="font-mono text-2xl font-bold text-accent-ink leading-tight">0 days</div>
+            <div class="text-xs font-semibold text-ink mt-0.5">Daily streak</div>
+            <div id="streak-daily-best" class="text-xs text-faint">Best 0</div>
+          </div>
+          <div class="streak-tile bg-surface/60 rounded-lg p-2.5 text-center">
+            <div id="streak-run" class="font-mono text-2xl font-bold text-accent-ink leading-tight">0</div>
+            <div class="text-xs font-semibold text-ink mt-0.5">Wins in a row</div>
+            <div id="streak-run-best" class="text-xs text-faint">Best 0</div>
+          </div>
+        </div>
+      </div>
+
       <!-- Reward boost badge (rendered when the day's combined pot crosses the milestone) -->
       <div id="boost-banner" class="mb-4"></div>
 
@@ -883,7 +901,30 @@
 
     // ── HOME ──────────────────────────────────────────────────────────
     async function loadHome() {
-      await Promise.all([loadPricesHome(), loadCurrentRound()]);
+      await Promise.all([loadPricesHome(), loadCurrentRound(), loadStreaks()]);
+    }
+
+    // ── Streaks ───────────────────────────────────────────────────────
+    async function loadStreaks() {
+      try {
+        const demoParam = params.get('demo') === '1' ? '?demo=1' : '';
+        const data = await api('/api/streaks' + demoParam);
+        renderStreakCard(data.streaks || {});
+      } catch {
+        renderStreakCard(null); // keep the card up, values at zero
+      }
+    }
+
+    function renderStreakCard(streaks) {
+      const daily = streaks?.daily || {};
+      const run = streaks?.in_a_row || {};
+      const days = daily.current ?? 0;
+      const el = document.getElementById('streak-daily');
+      if (!el) return;
+      el.textContent = `${days} ${days === 1 ? 'day' : 'days'}`;
+      document.getElementById('streak-daily-best').textContent = `Best ${daily.best ?? 0}`;
+      document.getElementById('streak-run').textContent = String(run.current ?? 0);
+      document.getElementById('streak-run-best').textContent = `Best ${run.best ?? 0}`;
     }
 
     async function loadPricesHome() {
@@ -1669,21 +1710,26 @@
       tableEl.innerHTML = '<p class="text-faint text-sm text-center py-8">Loading...</p>';
 
       try {
-        const { leaderboard, my_stats } = await api(`/api/leaderboard?period=${period}`);
+        const demoParam = params.get('demo') === '1' ? '&demo=1' : '';
+        const { leaderboard, my_stats } = await api(`/api/leaderboard?period=${period}${demoParam}`);
 
         if (!leaderboard.length) {
           tableEl.innerHTML = '<p class="text-faint text-sm text-center py-8">No results yet for this period.</p>';
           return;
         }
 
+        // Columns: Rank / Player / Wins / Accuracy / Won. Wins = number of
+        // first-place (closest-guess) payouts — the board's ranking key.
         const header = `<div class="grid grid-cols-12 gap-1 text-xs text-faint px-3 py-2 mb-1">
           <span class="col-span-2">Rank</span>
-          <span class="col-span-5">Player</span>
-          <span class="col-span-3 text-right">Accuracy</span>
+          <span class="col-span-4">Player</span>
+          <span class="col-span-2 text-right">Wins</span>
+          <span class="col-span-2 text-right">Accuracy</span>
           <span class="col-span-2 text-right">Won</span>
         </div>`;
 
         const rows = leaderboard.map((row, i) => {
+          const isMe = !!row.is_me;
           const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '';
           const podium = [
             'bg-gradient-to-r from-amber-500/20 to-surface-2/40 border border-amber-500/40',
@@ -1695,25 +1741,27 @@
             : i === 1 ? 'bg-zinc-400/30 text-zinc-100'
             : i === 2 ? 'bg-orange-700/30 text-orange-200'
             : 'bg-accent/30 text-accent-ink';
-          return `<div class="leaderboard-row grid grid-cols-12 gap-1 items-center text-sm px-3 py-2.5 rounded-lg mb-1 ${rowCls}">
-            <span class="col-span-2 text-ink ${medal ? 'text-lg' : 'text-xs'}">${medal || (i+1)}</span>
-            <span class="col-span-5 flex items-center gap-2 min-w-0">
+          return `<div class="leaderboard-row${isMe ? ' leaderboard-row-me' : ''} grid grid-cols-12 gap-1 items-center text-sm px-3 py-2.5 rounded-lg mb-1 ${rowCls}${isMe ? ' ring-2 ring-accent' : ''}">
+            <span class="col-span-2 text-ink ${medal ? 'text-lg' : 'text-xs'}">${medal || (row.rank != null ? row.rank : i+1)}</span>
+            <span class="col-span-4 flex items-center gap-2 min-w-0">
               <span class="w-6 h-6 shrink-0 rounded-full flex items-center justify-center text-xs font-bold ${avatarCls}">${escHtml((row.username || '?')[0]).toUpperCase()}</span>
-              <span class="truncate font-medium">${escHtml(row.username)}</span>
+              <span class="truncate font-medium${isMe ? ' text-accent-ink' : ''}">${escHtml(row.username)}${isMe ? ' (you)' : ''}</span>
             </span>
-            <span class="col-span-3 text-right font-mono text-accent-ink text-xs">${row.accuracy_pct != null ? parseFloat(row.accuracy_pct).toFixed(1) + '%' : '—'}</span>
+            <span class="col-span-2 text-right font-mono text-xs text-ink-bright font-bold">${parseInt(row.wins) || 0}</span>
+            <span class="col-span-2 text-right font-mono text-accent-ink text-xs">${row.accuracy_pct != null ? parseFloat(row.accuracy_pct).toFixed(1) + '%' : '—'}</span>
             <span class="col-span-2 text-right font-mono text-pos text-xs">${parseFloat(row.total_won).toFixed(2)}</span>
           </div>`;
         }).join('');
 
         const myRow = my_stats ? `<div class="mt-3 pt-3 border-t border-line/50">
-          <div class="leaderboard-row grid grid-cols-12 gap-1 items-center text-sm px-3 py-2.5 rounded-lg bg-surface/30 border border-surface">
-            <span class="col-span-2 text-muted text-xs">You</span>
-            <span class="col-span-5 flex items-center gap-2 min-w-0">
+          <div class="leaderboard-row leaderboard-row-me grid grid-cols-12 gap-1 items-center text-sm px-3 py-2.5 rounded-lg bg-surface/30 border border-surface ring-2 ring-accent">
+            <span class="col-span-2 text-muted text-xs">${my_stats.rank != null ? '#' + my_stats.rank : 'You'}</span>
+            <span class="col-span-4 flex items-center gap-2 min-w-0">
               <span class="w-6 h-6 shrink-0 rounded-full flex items-center justify-center text-xs font-bold bg-accent/40 text-accent-ink">★</span>
-              <span class="truncate font-medium text-accent-ink">me</span>
+              <span class="truncate font-medium text-accent-ink">You</span>
             </span>
-            <span class="col-span-3 text-right font-mono text-accent-ink text-xs">${my_stats.accuracy_pct != null ? parseFloat(my_stats.accuracy_pct).toFixed(1) + '%' : '—'}</span>
+            <span class="col-span-2 text-right font-mono text-xs text-ink-bright font-bold">${parseInt(my_stats.wins) || 0}</span>
+            <span class="col-span-2 text-right font-mono text-accent-ink text-xs">${my_stats.accuracy_pct != null ? parseFloat(my_stats.accuracy_pct).toFixed(1) + '%' : '—'}</span>
             <span class="col-span-2 text-right font-mono text-pos text-xs">${parseFloat(my_stats.total_won || 0).toFixed(2)}</span>
           </div>
         </div>` : '';
