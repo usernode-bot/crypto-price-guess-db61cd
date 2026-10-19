@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const { verifyGuessTransaction } = require('./lib/tx-match');
 const { calculatePayouts, fetchClosePrice } = require('./lib/settlement');
 const { computeStreaks } = require('./lib/streaks');
+const { daySeries } = require('./lib/price-history');
 const { STAGING_APP_PUBKEY, paymentsConfigured, buildConfig } = require('./lib/wallet-config');
 
 // The platform's address, injected by the platform at deploy (#2047). Never
@@ -42,7 +43,7 @@ const COINGECKO_IDS = {
 };
 
 let priceCache = { data: null, fetchedAt: 0 };
-// Per-asset 1-hour intraday history cache: { [asset]: { data, fetchedAt } }
+// Per-asset 24-hour intraday history cache: { [asset]: { data, fetchedAt } }
 const priceHistoryCache = {};
 
 // Representative spot price per asset for staging synthesis (mirrors seedStaging's
@@ -151,20 +152,22 @@ app.get('/api/prices', async (_req, res) => {
   }
 });
 
-// Build a deterministic ~12-point, 60-minute synthetic series around a base price.
+// Build a deterministic 97-point, 24-hour synthetic series around a base price
+// (one point every 15 minutes, matching the live series' downsampled density).
 // No Math.random so staging output is stable for proposal tests.
 function synthHistory(asset) {
   const base = STAGING_BASE_PRICE[asset];
   if (!base) return { asset, points: [], current: null, change_pct: 0 };
   const now = Date.now();
   const points = [];
-  const N = 12;
+  const N = 97;
   for (let i = 0; i < N; i++) {
-    // Smooth deterministic wiggle: blend two sines keyed on index + asset length.
-    const phase = i + asset.length;
+    // Same smooth deterministic wiggle as before, stretched over the day: the
+    // slow phase step keeps the curve gentle instead of jagged at N=97.
+    const phase = (i * 11) / (N - 1) + asset.length;
     const wiggle = Math.sin(phase * 0.7) * 0.012 + Math.sin(phase * 0.27) * 0.006;
     const p = base * (1 + wiggle);
-    const t = now - (N - 1 - i) * 5 * 60 * 1000;
+    const t = now - (N - 1 - i) * 15 * 60 * 1000;
     points.push({ t, p: parseFloat(p.toFixed(8)) });
   }
   const first = points[0].p;
@@ -193,8 +196,9 @@ async function fetchPriceHistory(asset) {
     if (res.ok) {
       const json = await res.json();
       const raw = Array.isArray(json?.prices) ? json.prices : [];
-      const cutoff = now - 60 * 60 * 1000;
-      const recent = raw.filter(([t]) => t >= cutoff).map(([t, p]) => ({ t, p }));
+      // Full 24-hour window from the same days=1 series (~288 5-minute points),
+      // lightly downsampled to ≤96 points by lib/price-history.daySeries.
+      const recent = daySeries(raw, now);
       const points = recent.length >= 2 ? recent : raw.slice(-12).map(([t, p]) => ({ t, p }));
       if (points.length >= 2) {
         const first = points[0].p;

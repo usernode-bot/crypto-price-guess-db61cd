@@ -65,7 +65,7 @@
       "expectSelector": ".wallet-status"
     },
     {
-      "name": "Guess screen renders 1-hour preview chart",
+      "name": "Guess screen renders 24-hour preview chart",
       "path": "/#guess",
       "expectSelector": ".guess-chart"
     },
