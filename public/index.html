@@ -230,10 +230,10 @@
         </div>
       </div>
 
-      <!-- 1-hour price preview chart (purely informational, never constrains the guess).
+      <!-- 24-hour price preview chart (purely informational, never constrains the guess).
            Always present + visible on the Guess screen; fills in once an asset is selected. -->
       <div id="guess-chart" class="guess-chart mb-3 bg-surface-2/50 rounded-xl p-3 border border-line/50">
-        <p class="text-xs text-faint text-center py-3">Tap an asset to preview its last hour</p>
+        <p class="text-xs text-faint text-center py-3">Tap an asset to preview its last 24 hours</p>
       </div>
 
       <!-- Stake selector. Always present (outside the asset-gated form) so the
@@ -1124,7 +1124,7 @@
       } catch {}
     }
 
-    // ── 1-hour preview chart ──────────────────────────────────────────
+    // ── 24-hour preview chart ─────────────────────────────────────────
     function chartPlaceholder(text) {
       const el = document.getElementById('guess-chart');
       if (el) el.innerHTML = `<p class="text-xs text-faint text-center py-3">${text}</p>`;
@@ -1135,7 +1135,7 @@
       if (!el) return;
       const points = (data && Array.isArray(data.points)) ? data.points : [];
       if (points.length < 2) {
-        chartPlaceholder('1-hour chart unavailable');
+        chartPlaceholder('24-hour chart unavailable');
         return;
       }
 
@@ -1163,8 +1163,8 @@
 
       el.innerHTML = `
         <div class="flex items-center justify-between mb-1.5">
-          <span class="text-xs text-muted">Last 1h</span>
-          <span class="text-xs font-mono ${up ? 'text-pos' : 'text-neg'}">1h ${pctStr}</span>
+          <span class="text-xs text-muted">Last 24h</span>
+          <span class="text-xs font-mono ${up ? 'text-pos' : 'text-neg'}">24h ${pctStr}</span>
         </div>
         <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="w-full" style="height:56px" aria-hidden="true">
           <polygon points="${areaPts}" fill="${fill}" stroke="none"></polygon>
@@ -1186,7 +1186,7 @@
         renderGuessChart(data);
       } catch {
         if (state.selectedAsset !== asset) return;
-        chartPlaceholder('1-hour chart unavailable');
+        chartPlaceholder('24-hour chart unavailable');
       }
     }
 
@@ -1254,7 +1254,7 @@
         updateDeltaPreview();
       }
 
-      // (Re)start the 1-hour preview chart for this asset.
+      // (Re)start the 24-hour preview chart for this asset.
       startChartRefresh(asset);
     }
 
