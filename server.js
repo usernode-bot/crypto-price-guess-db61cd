@@ -6,6 +6,7 @@ const { verifyGuessTransaction } = require('./lib/tx-match');
 const { calculatePayouts, fetchClosePrice } = require('./lib/settlement');
 const { computeStreaks } = require('./lib/streaks');
 const { daySeries } = require('./lib/price-history');
+const { weekStartFor, weekEndFor, isCompletedWeek, weekLabel, chipLabel, dayMs } = require('./lib/weeks');
 const { STAGING_APP_PUBKEY, paymentsConfigured, buildConfig } = require('./lib/wallet-config');
 
 // The platform's address, injected by the platform at deploy (#2047). Never
@@ -67,7 +68,7 @@ const PUBLIC_API_PATHS = new Set([
   // In staging these are public so proposal tests can verify dynamic selectors
   // (incl. the reward-boost badge, which sums the round pot) without the test
   // framework needing to inject auth tokens.
-  ...(IS_STAGING ? ['/api/prices', '/api/price-history', '/api/history', '/api/leaderboard', '/api/round/current', '/api/user/predictions', '/api/profile', '/api/daily-closes', '/api/streaks'] : []),
+  ...(IS_STAGING ? ['/api/prices', '/api/price-history', '/api/history', '/api/leaderboard', '/api/leaderboard/weekly', '/api/round/current', '/api/user/predictions', '/api/profile', '/api/daily-closes', '/api/streaks'] : []),
 ]);
 const PUBLIC_PREFIXES = ['/explorer-api/'];
 
@@ -94,6 +95,16 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+// Read "now" through the platform (convention: time-dependent features). Real
+// time in production; a staging preview may pin a moment via x-usernode-now or
+// ?un-now, which the page forwards on every API call when it has one.
+const PREVIEW_NOW_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/;
+function requestNow(req) {
+  const raw = IS_STAGING ? (req.headers['x-usernode-now'] || req.query['un-now']) : null;
+  return typeof raw === 'string' && PREVIEW_NOW_RE.test(raw) ? new Date(raw) : new Date();
+}
+app.use((req, _res, next) => { req.now = requestNow(req); next(); });
 
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
@@ -685,6 +696,174 @@ app.get('/api/leaderboard', async (req, res) => {
   }
 });
 
+// Weekly contest board: one ranked contest per Monday-to-Sunday UTC week.
+// A round belongs to the week of the day it was played (its round_date), so
+// Sunday's round counts for the week that just ended even though it settles
+// early Monday. Wins = place-1 payouts ("the closest guess for that token")
+// in the week; the ranking key matches /api/leaderboard so the two views
+// agree. Computed on request from the existing tables — no new tables, no
+// cron. "Now" comes from req.now so a staging preview can pin the moment.
+app.get('/api/leaderboard/weekly', async (req, res) => {
+  try {
+    const now = req.now || new Date();
+    const currentWeekStart = weekStartFor(now);
+
+    // Weeks that have at least one settled round, most recent first — a week
+    // appears in the picker once any of its rounds has settled.
+    const { rows: weekRows } = await pool.query(`
+      SELECT DISTINCT (date_trunc('week', round_date))::date AS week_start
+      FROM results ORDER BY week_start DESC LIMIT 8
+    `);
+    const weeks = weekRows.map(r => {
+      const start = r.week_start.toISOString().slice(0, 10);
+      return {
+        start,
+        end: weekEndFor(start),
+        label: weekLabel(start),
+        chip: chipLabel(start),
+        current: start === currentWeekStart,
+      };
+    });
+
+    // ?week must be a known Monday start; anything else (omitted, stale, not
+    // a date) falls back to the most recent completed week — the newest week
+    // in the list until the first one completes — so a stale link never
+    // dead-ends. With no settled rounds at all, fall back to the running week.
+    const requested = typeof req.query.week === 'string' ? parseDateParam(req.query.week) : null;
+    let selected = requested ? weeks.find(w => w.start === requested) : null;
+    if (!selected) selected = weeks.find(w => isCompletedWeek(w.start, now)) || weeks[0] || null;
+    const weekStart = selected ? selected.start : currentWeekStart;
+
+    // "Me" for the own-row highlight: ?demo=1 in staging resolves to the demo
+    // user (same pattern as /api/leaderboard), otherwise the JWT user. -1
+    // matches no one for anonymous visitors.
+    const isDemo = IS_STAGING && req.query.demo === '1';
+    const meId = isDemo ? 900001 : (req.user ? req.user.id : -1);
+    const params = [weekStart, meId];
+
+    // Same ranked CTE as /api/leaderboard, windowed to the 7 days of the
+    // selected week (round_date >= start AND < start + 7: Sunday's rounds in,
+    // next Monday's out). Ranked by weekly WINS (place-1 payouts), then
+    // accuracy, then tokens won that week — /api/leaderboard's ORDER BY.
+    const { rows } = await pool.query(`
+      WITH acc AS (
+        SELECT g.user_id,
+               MAX(g.username) AS username,
+               ROUND((AVG(GREATEST(0, 1 - ABS(g.price_guess - r.close_price) / NULLIF(r.close_price, 0))) * 100)::numeric, 1) AS accuracy_pct,
+               COUNT(*) AS guesses_count
+        FROM guesses g
+        JOIN results r ON r.round_date = g.round_date AND r.asset = g.asset
+        WHERE g.round_date >= $1::date AND g.round_date < ($1::date + 7)
+        GROUP BY g.user_id
+      ),
+      pay AS (
+        SELECT user_id,
+               ROUND(SUM(prize_tokens)::numeric, 2) AS total_won,
+               COUNT(*) FILTER (WHERE place = 1) AS wins,
+               COUNT(DISTINCT round_date) AS rounds_with_prizes
+        FROM payouts
+        WHERE round_date >= $1::date AND round_date < ($1::date + 7)
+        GROUP BY user_id
+      ),
+      ranked AS (
+        SELECT acc.user_id,
+               COALESCE(pr.display_name, acc.username) AS username,
+               acc.accuracy_pct,
+               acc.guesses_count,
+               COALESCE(pay.total_won, 0) AS total_won,
+               COALESCE(pay.wins, 0) AS wins,
+               COALESCE(pay.rounds_with_prizes, 0) AS rounds_with_prizes,
+               ROW_NUMBER() OVER (
+                 ORDER BY COALESCE(pay.wins, 0) DESC,
+                          acc.accuracy_pct DESC,
+                          COALESCE(pay.total_won, 0) DESC,
+                          acc.guesses_count DESC,
+                          acc.username ASC
+               ) AS rank
+        FROM acc
+        LEFT JOIN pay ON pay.user_id = acc.user_id
+        LEFT JOIN profiles pr ON pr.user_id = acc.user_id
+        WHERE acc.guesses_count >= 1
+      )
+      SELECT rank, username, accuracy_pct, guesses_count, total_won, wins, rounds_with_prizes,
+             (user_id = $2) AS is_me
+      FROM ranked
+      ORDER BY rank
+      LIMIT 50
+    `, params);
+
+    // ROW_NUMBER() is bigint → node-pg returns it as a string; hand it over as
+    // a number the same way /api/leaderboard does.
+    for (const r of rows) r.rank = parseInt(r.rank);
+
+    let myStats = null;
+    if (req.user || isDemo) {
+      // Same ranked CTE, un-LIMITed and filtered to "me" — the player's real
+      // weekly rank even when they're outside the top 50.
+      const { rows: myStatRows } = await pool.query(`
+        WITH acc AS (
+          SELECT g.user_id,
+                 MAX(g.username) AS username,
+                 ROUND((AVG(GREATEST(0, 1 - ABS(g.price_guess - r.close_price) / NULLIF(r.close_price, 0))) * 100)::numeric, 1) AS accuracy_pct,
+                 COUNT(*) AS guesses_count
+          FROM guesses g
+          JOIN results r ON r.round_date = g.round_date AND r.asset = g.asset
+          WHERE g.round_date >= $1::date AND g.round_date < ($1::date + 7)
+          GROUP BY g.user_id
+        ),
+        pay AS (
+          SELECT user_id,
+                 ROUND(SUM(prize_tokens)::numeric, 2) AS total_won,
+                 COUNT(*) FILTER (WHERE place = 1) AS wins,
+                 COUNT(DISTINCT round_date) AS rounds_with_prizes
+          FROM payouts
+          WHERE round_date >= $1::date AND round_date < ($1::date + 7)
+          GROUP BY user_id
+        ),
+        ranked AS (
+          SELECT acc.user_id,
+                 acc.accuracy_pct,
+                 acc.guesses_count,
+                 COALESCE(pay.total_won, 0) AS total_won,
+                 COALESCE(pay.wins, 0) AS wins,
+                 COALESCE(pay.rounds_with_prizes, 0) AS rounds_with_prizes,
+                 ROW_NUMBER() OVER (
+                   ORDER BY COALESCE(pay.wins, 0) DESC,
+                            acc.accuracy_pct DESC,
+                            COALESCE(pay.total_won, 0) DESC,
+                            acc.guesses_count DESC,
+                            acc.username ASC
+                 ) AS rank
+          FROM acc
+          LEFT JOIN pay ON pay.user_id = acc.user_id
+          WHERE acc.guesses_count >= 1
+        )
+        SELECT rank, accuracy_pct, guesses_count, total_won, wins, rounds_with_prizes
+        FROM ranked WHERE user_id = $2
+      `, params);
+      myStats = myStatRows[0] || {
+        rank: null, accuracy_pct: null, guesses_count: 0,
+        total_won: 0, wins: 0, rounds_with_prizes: 0,
+      };
+      if (myStats.rank != null) myStats.rank = parseInt(myStats.rank);
+    }
+
+    res.json({
+      weeks,
+      week: {
+        start: weekStart,
+        end: weekEndFor(weekStart),
+        label: weekLabel(weekStart),
+        current: weekStart === currentWeekStart,
+      },
+      leaderboard: rows,
+      my_stats: myStats,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Home-screen streaks: consecutive UTC days with at least one winning guess
 // (place 1 — the closest guess for that token), and the current/longest run of
 // consecutive winning guesses. Computed on request from guesses⋈results⋈payouts
@@ -1053,12 +1232,37 @@ async function seedStaging() {
     [900001, 'staging-alice', 'Staging Demo — Alice', 'Staging demo — I chase tight crypto predictions for fun.']
   );
 
-  // Seed 7 completed past rounds
-  for (let daysAgo = 7; daysAgo >= 1; daysAgo--) {
-    const d = new Date(today);
-    d.setUTCDate(d.getUTCDate() - daysAgo);
-    const roundDate = d.toISOString().slice(0, 10);
-    const priceIdx = 7 - daysAgo;
+  // Completed past rounds. Cover the two complete ISO weeks before the current
+  // one (plus whatever of the current week has already passed) so the Weekly
+  // board's week picker always has whole weeks to show, whatever day staging
+  // boots on. The per-week tightest guesser rotates — two weeks back carol,
+  // last week bob, the current week alice — so each complete week crowns a
+  // different weekly champion on the Weekly board.
+  const curWeekStartMs = dayMs(weekStartFor(today));
+  const firstSeededMs = curWeekStartMs - 14 * 86400000;
+  const lastSeededMs = dayMs(today) - 1 * 86400000; // yesterday; today's round stays open
+  let seq = 0;
+  for (let ms = firstSeededMs; ms <= lastSeededMs; ms += 86400000, seq++) {
+    const roundDate = new Date(ms).toISOString().slice(0, 10);
+    const priceIdx = seq % 7;
+    // Weeks back from the current one: 0 = current week, 1 = last week, 2 =
+    // the week before that. Rotating USER_ERR by the shift makes the week's
+    // tightest guesser (and thus its champion) staging-alice, -bob, -carol
+    // respectively.
+    const weekShift = (curWeekStartMs - dayMs(weekStartFor(roundDate))) / (7 * 86400000);
+    // Per-user characteristic error so the Top Guessers podium has a visible
+    // accuracy spread, rotated per week — alice tightest in the current week,
+    // bob last week, carol the week before, with alice always second-tightest
+    // in past weeks so she stays on the podium there.
+    const USER_ERR = [0.001, 0.004, 0.010, 0.020, 0.035];
+    const errIndexFor = (uIdx) => {
+      if (weekShift === 0) return uIdx;
+      const champ = weekShift === 1 ? 1 : 2; // bob last week, carol before that
+      if (uIdx === champ) return 0;
+      if (uIdx === 0) return 1; // alice
+      const rest = [1, 2, 3, 4].filter(i => i !== champ);
+      return 2 + rest.indexOf(uIdx);
+    };
 
     for (let ai = 0; ai < ASSETS.length; ai++) {
       const asset = ASSETS[ai];
@@ -1089,15 +1293,21 @@ async function seedStaging() {
         Math.floor(potTotal * 0.05 * 10000) / 10000,
       ];
 
-      // Per-user characteristic error so the Top Guessers podium has a
-      // visible accuracy spread (alice tightest → eve loosest).
-      const USER_ERR = [0.001, 0.004, 0.010, 0.020, 0.035];
+      // Rotated per week by errIndexFor above.
+      const seeded = [];
       for (let pi = 0; pi < 5; pi++) {
         const uIdx = (offset + pi) % 5;
         const w = fakeUsers[uIdx];
         const dir = (priceIdx + uIdx) % 2 === 0 ? 1 : -1;
-        const mult = 1 + dir * USER_ERR[uIdx];
-        const guessPrice = parseFloat((closePrice * mult).toFixed(2));
+        // Distance from the close in absolute price units. A percentage error
+        // alone vanishes below the 2-decimal guess quantum on the cheapest
+        // tokens (sub-$1), which would tie several players at the same
+        // rounded guess; the per-rank floor keeps every distance distinct so
+        // the week's tightest guesser — and thus its champion — is
+        // unambiguous.
+        const e = errIndexFor(uIdx);
+        const dist = Math.max(closePrice * USER_ERR[e], 0.02 * (e + 1));
+        const guessPrice = parseFloat((closePrice + dir * dist).toFixed(2));
         const stake = stakeForUser(uIdx);
         const submittedAt = roundDate + 'T12:00:00.000Z';
         // Give the demo user (900001 — the ?demo=1 My Predictions view) an
@@ -1112,14 +1322,22 @@ async function seedStaging() {
            ON CONFLICT (user_id, round_date, asset) DO NOTHING`,
           [w.id, w.username, roundDate, asset, guessPrice, stake, submittedAt, txHash, txHash ? `ut1-${w.username}` : null, txHash ? submittedAt : null]
         );
-        if (pi < 3) {
-          await pool.query(
-            `INSERT INTO payouts (round_date, asset, user_id, username, place, price_guess, prize_tokens)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
-             ON CONFLICT (round_date, asset, user_id) DO NOTHING`,
-            [roundDate, asset, w.id, w.username, pi + 1, guessPrice, prizes[pi]]
-          );
-        }
+        seeded.push({ w, guessPrice, dist: Math.abs(guessPrice - closePrice) });
+      }
+
+      // Payouts follow closeness the way the real settlement ranks guesses
+      // (lib/settlement.calculatePayouts over distance-sorted guesses), so a
+      // week's place-1 payouts — its "wins" on the weekly board — go to that
+      // week's tightest guesser rather than to seed order.
+      seeded.sort((a, b) => a.dist - b.dist);
+      for (let place = 0; place < Math.min(3, seeded.length); place++) {
+        const s = seeded[place];
+        await pool.query(
+          `INSERT INTO payouts (round_date, asset, user_id, username, place, price_guess, prize_tokens)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT (round_date, asset, user_id) DO NOTHING`,
+          [roundDate, asset, s.w.id, s.w.username, place + 1, s.guessPrice, prizes[place]]
+        );
       }
     }
   }

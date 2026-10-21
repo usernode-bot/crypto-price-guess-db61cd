@@ -108,6 +108,24 @@
       "expectSelector": ".leaderboard-row-me"
     },
     {
+      "name": "Board shows the Weekly tab",
+      "path": "/#leaderboard",
+      "expectSelector": "#lb-tab-weekly"
+    },
+    {
+      "name": "Weekly board renders the week picker",
+      "path": "/#leaderboard",
+      "expectSelector": ".weekly-week-chip",
+      "id": "weekly-board",
+      "visual": true,
+      "impact": ["server.js", "public/index.html", "lib/weeks.js"]
+    },
+    {
+      "name": "Weekly champion banner renders",
+      "path": "/#leaderboard",
+      "expectSelector": ".weekly-champion"
+    },
+    {
       "name": "My Predictions tab renders prediction cards",
       "path": "/?demo=1#history",
       "expectSelector": ".prediction-row"

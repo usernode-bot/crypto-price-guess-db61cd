@@ -28,11 +28,22 @@ tables you've marked private), etc.
 
 ## About Crypto Price Guess
 
-_(add a sentence or two of product context here so Claude Code has a
-shared understanding of what this app is for)_
+Members stake tokens predicting a crypto token's daily closing price; the
+closest guesses split the pot. Rounds are daily (one per token, UTC),
+settle overnight via the CoinGecko close snapshot, and the Board ranks
+player accuracy.
 
 ## App-specific conventions
 
-_(optional — e.g. "all currency values stored as integer cents, not
-floats"; "the `posts` table is append-only"; "avoid adding new
-dependencies"; etc.)_
+- **A week runs Monday 00:00 UTC to Sunday 24:00 UTC.** A round belongs
+  to the week of the day it was played (its `round_date`), so Sunday's
+  round counts for the week that just ended even though it settles early
+  Monday. Week math lives in `lib/weeks.js`; `date_trunc('week', …)`
+  (Monday-first) in SQL agrees with it. This is the definition behind
+  both the Board's "This Week" period and the Weekly contest view.
+- The server runs in UTC and all dates are UTC; the frontend formats
+  dates with `timeZone: 'UTC'` so weeks never shift per-member.
+- "Now" is read through the platform (`req.now` on the server,
+  `x-usernode-now` forwarded by the page's `api()` helper) wherever the
+  date decides what shows — never `new Date()` in a new time-dependent
+  path.
